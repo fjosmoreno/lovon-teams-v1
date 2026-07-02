@@ -61,14 +61,19 @@ export async function POST(req: NextRequest) {
     // Map status codes to human messages
     const errText = await res.text().catch(() => "");
     let message: string;
+    let ok = false;
     if (res.status === 401) message = "API key inválida ou expirada (401).";
     else if (res.status === 403) message = "API key sem permissão para este modelo (403).";
-    else if (res.status === 404) message = `Endpoint ou modelo "${model}" não encontrado (404). Verifique a baseUrl e o nome do modelo.`;
-    else if (res.status === 429) message = "Rate limit atingido (429). Tente novamente em alguns segundos.";
+    else if (res.status === 404) message = `Modelo "${model}" não encontrado (404). Troque o modelo no dropdown.`;
+    else if (res.status === 429) {
+      // 429 = key IS valid, just rate-limited. Mark as ok=true with warning so user proceeds.
+      ok = true;
+      message = `✓ Key válida · rate limit atingido (429). Aguarde ~1min antes de testar de novo.`;
+    }
     else if (res.status >= 500) message = `Provider fora do ar (${res.status}). Tente outro provider.`;
     else message = `Erro ${res.status}: ${errText.slice(0, 200)}`;
 
-    return NextResponse.json({ ok: false, message, latencyMs, provider, model }, { status: 200 });
+    return NextResponse.json({ ok, message, latencyMs, provider, model }, { status: 200 });
   } catch (err) {
     const latencyMs = Date.now() - start;
     const errMsg = err instanceof Error ? err.message : "Erro desconhecido";
