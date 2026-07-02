@@ -50,71 +50,86 @@ async function callAgentAPI(payload: {
   agentRoleConfig?: import("./store").AgentRoleConfig | null;
   knowledgeBase?: import("./store").KBDocument[];
   expectedWorkProducts?: import("./store").ExpectedWorkProducts;
-}): Promise<{ success: boolean; conclusion?: string; plan?: CEOPlan; error?: string; raw?: string; retrievedDocs?: { id: string; title: string; category: string }[] }> {
-  // Resolve per-user provider config from store (credentials live in localStorage vault).
-  // Priority: integrations with providerKey in AI list > first enabled integration.
-  const providerConfig = resolveProviderConfigForEngine();
-
-  try {
-    const res = await fetch("/api/lovon/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, providerConfig }),
-    });
-    if (!res.ok) {
-      return { success: false, error: `HTTP ${res.status}` };
-    }
-    const data = await res.json();
-    if (data.success) {
-      return { success: true, conclusion: data.conclusion, plan: data.plan, retrievedDocs: data.retrievedDocs };
-    }
-    return { success: false, error: data.error, raw: data.raw };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "fetch failed";
-    return { success: false, error: message };
+}): Promise<{ success: boolean; conclusion?: string; plan?: CEOPlan; error?: string; raw?: string; retrievedDocs?: { id: string; title: string; category: string }[]; providerUsed?: string }> {
+  // Resolve per-user provider config from store.
+  // Tries each enabled AI integration in order until one succeeds (fallback chain).
+  const providers = resolveProviderConfigForEngine();
+  if (providers.length === 0) {
+    return { success: false, error: "Nenhum provider LLM configurado. Vá em Configurações → Provedores de IA e adicione pelo menos um." };
   }
+
+  const errors: string[] = [];
+  for (const providerConfig of providers) {
+    try {
+      const res = await fetch("/api/lovon/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, providerConfig }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        return {
+          success: true,
+          conclusion: data.conclusion,
+          plan: data.plan,
+          retrievedDocs: data.retrievedDocs,
+          providerUsed: providerConfig.provider,
+        };
+      }
+      const errMsg = `${providerConfig.provider}: ${data.error ?? `HTTP ${res.status}`}`;
+      errors.push(errMsg);
+      console.warn(`[engine] LLM call failed on ${providerConfig.provider}:`, data.error);
+      // Continue to next provider in fallback chain
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "fetch failed";
+      errors.push(`${providerConfig.provider}: ${message}`);
+      console.warn(`[engine] LLM call threw on ${providerConfig.provider}:`, err);
+    }
+  }
+
+  return {
+    success: false,
+    error: `Todos os ${providers.length} provedores falharam:\n${errors.join("\n")}`,
+  };
 }
 
-// Read per-user LLM provider config from the Zustand store.
-// Looks up the first enabled AI integration, reads its credential from localStorage vault,
-// returns { baseUrl, apiKey, model, provider } or null if none configured.
-function resolveProviderConfigForEngine(): {
+// Read per-user LLM providers from the Zustand store.
+// Returns ALL enabled AI integrations (in order), each with credentials read from localStorage vault.
+// Returns empty array if none configured.
+function resolveProviderConfigForEngine(): Array<{
   baseUrl: string;
   apiKey: string;
   model?: string;
-  provider?: string;
-} | null {
-  if (typeof window === "undefined") return null;
+  provider: string;
+}> {
+  if (typeof window === "undefined") return [];
   try {
     const state = useLovonStore.getState();
     const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"];
-    const integration = state.integrations.find(
-      (i) => i.status === "active" && aiProviders.includes(i.providerKey)
-    );
-    if (!integration) return null;
-
-    const apiKey = window.localStorage.getItem(`vault:integration:${integration.id}`) ?? "";
-    if (!apiKey) return null;
-
-    const cfg = integration.config ?? {};
-    const baseUrl =
-      (cfg.baseUrl as string | undefined) ??
-      // sensible defaults per provider
-      ({
-        openai: "https://api.openai.com/v1",
-        anthropic: "https://api.anthropic.com/v1",
-        groq: "https://api.groq.com/openai/v1",
-        openrouter: "https://openrouter.ai/api/v1",
-        deepseek: "https://api.deepseek.com/v1",
-        gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
-      } as Record<string, string>)[integration.providerKey];
-
-    const model = (cfg.models as string[] | undefined)?.[0];
-
-    return { baseUrl, apiKey, model, provider: integration.providerKey };
+    const defaults: Record<string, string> = {
+      openai: "https://api.openai.com/v1",
+      anthropic: "https://api.anthropic.com/v1",
+      groq: "https://api.groq.com/openai/v1",
+      openrouter: "https://openrouter.ai/api/v1",
+      deepseek: "https://api.deepseek.com/v1",
+      gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+    };
+    const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string }> = [];
+    for (const integration of state.integrations) {
+      if (integration.status !== "active") continue;
+      if (!aiProviders.includes(integration.providerKey)) continue;
+      const apiKey = window.localStorage.getItem(`vault:integration:${integration.id}`) ?? "";
+      if (!apiKey) continue;
+      const cfg = integration.config ?? {};
+      const baseUrl = (cfg.baseUrl as string | undefined) ?? defaults[integration.providerKey];
+      if (!baseUrl) continue;
+      const model = (cfg.models as string[] | undefined)?.[0];
+      out.push({ baseUrl, apiKey, model, provider: integration.providerKey });
+    }
+    return out;
   } catch (err) {
     console.warn("[engine] resolveProviderConfigForEngine failed:", err);
-    return null;
+    return [];
   }
 }
 
@@ -184,7 +199,7 @@ export async function runCEOMission(mission: string): Promise<void> {
       agentId: ceo.id,
       agentName: ceo.name,
       action: "message",
-      message: `Plano gerado. ${plan.subtasks.length} subtasks em ${plan.departments.length} departamentos. Análise: ${plan.analysis.slice(0, 140)}${plan.analysis.length > 140 ? "..." : ""}`,
+      message: `Plano gerado via ${planResult.providerUsed ?? "LLM"}. ${plan.subtasks.length} subtasks em ${plan.departments.length} departamentos. Análise: ${plan.analysis.slice(0, 140)}${plan.analysis.length > 140 ? "..." : ""}`,
       accent: ceo.accent,
     });
   } else {
