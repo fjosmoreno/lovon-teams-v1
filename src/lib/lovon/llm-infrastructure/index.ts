@@ -222,12 +222,20 @@ async function executeSingleLLMCall(
   // Path A: OpenAI-compatible via env vars OR caller override (preferred for serverless deploys)
   if (cfg) {
     const url = `${cfg.baseUrl}/chat/completions`;
+    // Build headers. OpenRouter and many providers require HTTP-Referer + X-Title
+    // for free models — without them, you can get 403.
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${cfg.apiKey}`,
+    };
+    // Detect OpenRouter-style providers by baseUrl pattern
+    if (cfg.baseUrl.includes("openrouter.ai") || cfg.baseUrl.includes("openrouter")) {
+      headers["HTTP-Referer"] = process.env.LOVON_APP_URL ?? "https://lovon-teams-v1.onrender.com";
+      headers["X-Title"] = "Lovon Teams";
+    }
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
+      headers,
       body: JSON.stringify({
         model: cfg.model,
         messages: [
@@ -235,6 +243,7 @@ async function executeSingleLLMCall(
           { role: "user", content: userPrompt },
         ],
         temperature: 0.4,
+        max_tokens: 4096,
       }),
     });
 

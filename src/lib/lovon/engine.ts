@@ -60,6 +60,19 @@ async function callAgentAPI(payload: {
 
   const errors: string[] = [];
   for (const providerConfig of providers) {
+    // Surface the attempt in activity feed so user can see the chain in action
+    const agentForLog = useLovonStore.getState().agents.find(
+      (a) => a.name === payload.agentName
+    );
+    if (agentForLog) {
+      useLovonStore.getState().logActivity({
+        agentId: agentForLog.id,
+        agentName: agentForLog.name,
+        action: "thinking",
+        message: `Tentando provider ${providerConfig.provider} (${providerConfig.model ?? "default"})...`,
+        accent: "blue",
+      });
+    }
     try {
       const res = await fetch("/api/lovon/agent", {
         method: "POST",
@@ -68,6 +81,15 @@ async function callAgentAPI(payload: {
       });
       const data = await res.json();
       if (data.success) {
+        if (agentForLog) {
+          useLovonStore.getState().logActivity({
+            agentId: agentForLog.id,
+            agentName: agentForLog.name,
+            action: "completed",
+            message: `✓ Provider ${providerConfig.provider} respondeu com sucesso.`,
+            accent: "green",
+          });
+        }
         return {
           success: true,
           conclusion: data.conclusion,
@@ -78,6 +100,15 @@ async function callAgentAPI(payload: {
       }
       const errMsg = `${providerConfig.provider}: ${data.error ?? `HTTP ${res.status}`}`;
       errors.push(errMsg);
+      if (agentForLog) {
+        useLovonStore.getState().logActivity({
+          agentId: agentForLog.id,
+          agentName: agentForLog.name,
+          action: "failed",
+          message: `✗ Provider ${providerConfig.provider} falhou: ${data.error ?? `HTTP ${res.status}`}. Tentando próximo...`,
+          accent: "orange",
+        });
+      }
       console.warn(`[engine] LLM call failed on ${providerConfig.provider}:`, data.error);
       // Continue to next provider in fallback chain
     } catch (err) {
