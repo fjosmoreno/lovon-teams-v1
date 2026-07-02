@@ -145,6 +145,9 @@ export function Dashboard({ onExit }: Props) {
   const tasksActive = useLovonStore((s) => s.tasks.filter((t) => t.status === "in_progress" || t.status === "delegated").length);
   const tasksPendingUnassigned = useLovonStore((s) => s.tasks.filter((t) => t.status === "pending" && !t.assignedTo).length);
   const hydrated = useLovonStore((s) => s.hydrated);
+  const lastLLMError = useLovonStore((s) => s.lastLLMError);
+  const setLastLLMError = useLovonStore((s) => s.setLastLLMError);
+  const integrations = useLovonStore((s) => s.integrations);
   const { user, logout } = useAuth();
 
   // Auto-seed a default company + Company Core DNA on every dashboard load
@@ -425,6 +428,32 @@ export function Dashboard({ onExit }: Props) {
             </div>
           </div>
         </header>
+
+        {/* P0: LLM Error Banner — mostra o último erro do provider pra o user entender o que tá quebrando */}
+        {lastLLMError && (
+          <div className="mx-5 sm:mx-8 mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-start gap-3">
+            <div className="text-2xl shrink-0">⚠️</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-red-400 mb-1">
+                Última chamada de IA falhou
+              </div>
+              <pre className="text-[11px] font-mono text-red-300/80 whitespace-pre-wrap break-words">
+{lastLLMError.message}
+              </pre>
+              {integrations.length === 0 && (
+                <div className="text-[11px] text-red-300/80 mt-2">
+                  ⚠️ Nenhum provider configurado. Vá em <strong>Configurações → Provedores de IA</strong>.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setLastLLMError(null)}
+              className="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded shrink-0"
+            >
+              ✕ Fechar
+            </button>
+          </div>
+        )}
 
         {/* content */}
         <main className="flex-1 p-5 sm:p-8 overflow-x-hidden">

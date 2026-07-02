@@ -81,6 +81,8 @@ async function callAgentAPI(payload: {
       });
       const data = await res.json();
       if (data.success) {
+        // P0: clear last LLM error on success
+        useLovonStore.getState().setLastLLMError(null);
         if (agentForLog) {
           useLovonStore.getState().logActivity({
             agentId: agentForLog.id,
@@ -119,6 +121,11 @@ async function callAgentAPI(payload: {
       console.warn(`[engine] LLM call threw on ${providerConfig.provider}:`, err);
     }
   }
+
+  // P0: Save last LLM error to store so dashboard banner can show the real error
+  useLovonStore.getState().setLastLLMError({
+    message: `Todos os ${providers.length} provedores falharam:\n${errors.join("\n")}`,
+  });
 
   return {
     success: false,

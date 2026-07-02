@@ -1048,6 +1048,9 @@ export interface EditHistoryEntry {
 
 interface LovonState {
   hydrated: boolean;
+  // P0: last LLM error — surfaced as a banner on the dashboard so user
+  // sees the ACTUAL provider error instead of guessing from activity feed.
+  lastLLMError: { message: string; provider?: string; model?: string; timestamp: number } | null;
   company: Company | null;
   agents: Agent[];
   departments: Department[];
@@ -1247,6 +1250,7 @@ interface LovonState {
   logEdit: (entry: Omit<EditHistoryEntry, "id" | "timestamp">) => void;
   logActivity: (entry: Omit<Activity, "id" | "timestamp">) => void;
   resetAll: () => void;
+  setLastLLMError: (err: { message: string; provider?: string; model?: string } | null) => void;
   _setHydrated: () => void;
 
   // 4-Layer Prompt actions
@@ -1528,6 +1532,7 @@ export const useLovonStore = create<LovonState>()(
   persist(
     (set, get) => ({
       hydrated: false,
+      lastLLMError: null,
       company: null,
       agents: [],
       departments: [],
@@ -5454,6 +5459,9 @@ export const useLovonStore = create<LovonState>()(
         }));
       },
 
+      setLastLLMError: (err) => {
+        set({ lastLLMError: err ? { ...err, timestamp: Date.now() } : null });
+      },
       _setHydrated: () => set({ hydrated: true }),
     }),
     {

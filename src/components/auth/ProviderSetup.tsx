@@ -174,13 +174,21 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
   const createIntegration = useLovonStore((s) => s.createIntegration);
 
   async function handleTest(provider: ProviderCatalogEntry) {
+    return handleTestImpl(provider, false);
+  }
+
+  async function handleTestReal(provider: ProviderCatalogEntry) {
+    return handleTestImpl(provider, true);
+  }
+
+  async function handleTestImpl(provider: ProviderCatalogEntry, useRealPrompt: boolean) {
     const key = (keys[provider.id] ?? "").trim();
     if (!key) {
       setTestResults((r) => ({ ...r, [provider.id]: { ok: false, message: "Cole sua API key primeiro." } }));
       return;
     }
     setTestingId(provider.id);
-    setTestResults((r) => ({ ...r, [provider.id]: { ok: false, message: "Testando..." } }));
+    setTestResults((r) => ({ ...r, [provider.id]: { ok: false, message: useRealPrompt ? "Testando com prompt real..." : "Testando..." } }));
     try {
       const res = await fetch("/api/lovon/test-provider", {
         method: "POST",
@@ -190,6 +198,7 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           apiKey: key,
           model: models[provider.id] ?? provider.defaultModel,
           provider: provider.id,
+          real: useRealPrompt,
         }),
       });
       const data = await res.json();
@@ -317,6 +326,7 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           testingId={testingId}
           testResults={testResults}
           handleTest={handleTest}
+          handleTestReal={handleTestReal}
           setShowTutorial={setShowTutorial}
         />
 
@@ -336,6 +346,7 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           testingId={testingId}
           testResults={testResults}
           handleTest={handleTest}
+          handleTestReal={handleTestReal}
           setShowTutorial={setShowTutorial}
         />
 
@@ -414,6 +425,7 @@ function ProviderSection({
   testingId,
   testResults,
   handleTest,
+  handleTestReal,
   setShowTutorial,
 }: any) {
   return (
@@ -439,6 +451,7 @@ function ProviderSection({
             testing={testingId === p.id}
             testResult={testResults[p.id]}
             onTest={() => handleTest(p)}
+            onTestReal={() => handleTestReal(p)}
             onShowTutorial={() => setShowTutorial(p.id)}
           />
         ))}
@@ -463,6 +476,7 @@ function ProviderCard({
   testing,
   testResult,
   onTest,
+  onTestReal,
   onShowTutorial,
 }: {
   provider: ProviderCatalogEntry;
@@ -478,6 +492,7 @@ function ProviderCard({
   testing: boolean;
   testResult?: { ok: boolean; message: string; latencyMs?: number };
   onTest: () => void;
+  onTestReal: () => void;
   onShowTutorial: () => void;
 }) {
   const isTestedOk = testResult?.ok === true;
@@ -596,6 +611,18 @@ function ProviderCard({
                     <><Loader2 className="w-3 h-3 animate-spin" /> Testando...</>
                   ) : (
                     <><Zap className="w-3 h-3" /> Testar conexão</>
+                  )}
+                </button>
+                <button
+                  onClick={onTestReal}
+                  disabled={testing || !apiKey.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/30 hover:bg-orange-500/20 text-xs font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  title="Testa com prompt real (mimetiza chamada de produção). Pode falhar se o modelo não suportar prompts longos."
+                >
+                  {testing ? (
+                    <><Loader2 className="w-3 h-3 animate-spin" /> Testando...</>
+                  ) : (
+                    <><Zap className="w-3 h-3" /> Testar com prompt real</>
                   )}
                 </button>
                 {isTestedOk && (

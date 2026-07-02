@@ -92,7 +92,8 @@ export function getLLMLogs(limit = 50): LLMLogEntry[] {
 // === Retry Configuration ===
 
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504, 429]);
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 1; // P0: was 5, hiding real errors from user. With 1 attempt, error surfaces fast.
+const CB_FAILURE_THRESHOLD = 99; // P0: effectively disabled — was causing "stuck pending" cascade. Re-enable later with smarter reset.
 const BASE_DELAY_MS = 1000; // 1s
 const MAX_DELAY_MS = 30000; // 30s cap
 
@@ -206,7 +207,14 @@ async function executeSingleLLMCall(
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      // P0: clean, actionable error messages per status code
+      let hint = "";
+      if (res.status === 401) hint = "→ API key inválida ou expirada. Cole uma key nova em Configurações → Provedores de IA.";
+      else if (res.status === 403) hint = "→ API key sem permissão para este modelo. Troque o modelo no dropdown ou use outro provider.";
+      else if (res.status === 404) hint = "→ Modelo não encontrado nesse provider. Verifique o nome do modelo.";
+      else if (res.status === 429) hint = "→ Rate limit do free tier atingido. Aguarde 1min ou use outro provider.";
+      else if (res.status >= 500) hint = "→ Provider fora do ar. Tente outro provider.";
+      throw new Error(`LLM HTTP ${res.status} ${hint} | Resposta: ${errText.slice(0, 200)}`);
     }
 
     const data = (await res.json()) as {
@@ -260,7 +268,10 @@ export async function executeLLMWithInfra(
   const startTime = Date.now();
   const provider = params.provider ?? "openai-compatible";
   const model = params.model ?? providerOverride?.model ?? "default";
-  const cbKey = getCircuitBreakerKey(provider, model);
+  // P0: separate circuit breaker per call TYPE (plan vs execute) so a failed
+  // CEO plan doesn't cascade-block the worker call, and vice versa.
+  const callType = params.correlationId?.startsWith("ceo-") ? "plan" : "execute";
+  const cbKey = `${getCircuitBreakerKey(provider, model)}:${callType}`;
   const requestSizeBytes = params.systemPrompt.length + params.userPrompt.length;
 
   // Check circuit breaker
