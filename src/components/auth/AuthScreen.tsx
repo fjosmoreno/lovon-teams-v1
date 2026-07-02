@@ -12,7 +12,8 @@ interface Props {
 
 export function AuthScreen({ onSuccess, onBack }: Props) {
   const { login, signup } = useAuth();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  // Default to signup so new visitors create a fresh account, not log into existing one
+  const [mode, setMode] = useState<"login" | "signup">("signup");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
