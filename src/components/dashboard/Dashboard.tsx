@@ -32,6 +32,7 @@ import { useLovonStore } from "@/lib/lovon/store";
 import { useAuth } from "@/lib/lovon/AuthContext";
 import { ensureCompanyExists } from "@/lib/lovon/engine";
 import { VersionBanner } from "@/components/VersionBanner";
+import { useExecutionWatchdog } from "@/lib/lovon/useExecutionWatchdog";
 import { Onboarding } from "./Onboarding";
 import { CommandCenter } from "./views/CommandCenter";
 import { DashboardOverview } from "./views/Overview";
@@ -150,6 +151,10 @@ export function Dashboard({ onExit }: Props) {
       ensureCompanyExists(user.name);
     }
   }, [hydrated, user]);
+
+  // P0: Client-side execution watchdog — catches tasks stuck in "in_progress"
+  // because server-side setTimeout is lost on Render free tier cold starts.
+  useExecutionWatchdog();
 
   // P0: start auto-resume polling — picks up rate-limited tasks when window passes
   // or when a new provider becomes available.
