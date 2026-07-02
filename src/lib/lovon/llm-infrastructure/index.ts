@@ -108,59 +108,16 @@ function sleep(ms: number): Promise<void> {
 
 // === Circuit Breaker ===
 
-interface CircuitBreakerState {
-  failures: number;
-  lastFailureAt: number;
-  openUntil: number; // timestamp when circuit closes
-}
-
-const circuitBreakers = new Map<string, CircuitBreakerState>();
-const CB_FAILURE_THRESHOLD = 5;     // 5 failures
-const CB_WINDOW_MS = 2 * 60 * 1000; // in 2 minutes
-const CB_COOLDOWN_MS = 60 * 1000;   // pause for 60s
-
-function getCircuitBreakerKey(provider: string, model: string): string {
-  return `${provider}:${model}`;
-}
-
-function isCircuitOpen(key: string): boolean {
-  const cb = circuitBreakers.get(key);
-  if (!cb) return false;
-  if (cb.openUntil > Date.now()) return true;
-  // Reset if cooldown passed
-  if (cb.openUntil > 0 && cb.openUntil <= Date.now()) {
-    cb.openUntil = 0;
-    cb.failures = 0;
-  }
-  return false;
-}
-
-function recordCircuitFailure(key: string): void {
-  const now = Date.now();
-  let cb = circuitBreakers.get(key);
-  if (!cb) {
-    cb = { failures: 0, lastFailureAt: now, openUntil: 0 };
-    circuitBreakers.set(key, cb);
-  }
-  // Reset window if last failure was > 2 min ago
-  if (now - cb.lastFailureAt > CB_WINDOW_MS) {
-    cb.failures = 0;
-  }
-  cb.failures++;
-  cb.lastFailureAt = now;
-  if (cb.failures >= CB_FAILURE_THRESHOLD) {
-    cb.openUntil = now + CB_COOLDOWN_MS;
-    console.warn(`[CircuitBreaker] OPEN for ${key} — pausing for ${CB_COOLDOWN_MS / 1000}s (${cb.failures} failures in window)`);
-  }
-}
-
-function recordCircuitSuccess(key: string): void {
-  const cb = circuitBreakers.get(key);
-  if (cb) {
-    cb.failures = 0;
-    cb.openUntil = 0;
-  }
-}
+// P0: Circuit breaker logic moved to ./circuitBreaker.ts so it can be
+// imported from client code (AuthContext) without dragging in z-ai-web-dev-sdk.
+// Re-export the public API from this module for backward compatibility.
+export { clearAllCircuitBreakers, getCircuitBreakerStatus } from "./circuitBreaker";
+import {
+  getCircuitBreakerKey,
+  isCircuitOpen,
+  recordCircuitFailure,
+  recordCircuitSuccess,
+} from "./circuitBreaker";
 
 // === Concurrency Queue ===
 
@@ -451,16 +408,4 @@ export function getQueueStatus(): {
 }
 
 // === Circuit breaker status ===
-
-export function getCircuitBreakerStatus(): Array<{ key: string; failures: number; open: boolean; openUntil?: number }> {
-  const status: Array<{ key: string; failures: number; open: boolean; openUntil?: number }> = [];
-  for (const [key, cb] of circuitBreakers.entries()) {
-    status.push({
-      key,
-      failures: cb.failures,
-      open: cb.openUntil > Date.now(),
-      openUntil: cb.openUntil > Date.now() ? cb.openUntil : undefined,
-    });
-  }
-  return status;
-}
+// (Now in ./circuitBreaker.ts — re-exported at the top)

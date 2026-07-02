@@ -1,6 +1,10 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from "react";
+// Import directly from circuitBreaker.ts (not llm-infrastructure) to avoid
+// pulling in z-ai-web-dev-sdk (which uses fs/promises — server-only) into
+// the client bundle.
+import { clearAllCircuitBreakers } from "@/lib/lovon/llm-infrastructure/circuitBreaker";
 
 export interface AuthUser {
   id: string;
@@ -65,6 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 function clearLocalUserData() {
   if (typeof window === "undefined") return;
   try {
+    // 0) Reset LLM circuit breakers (in-memory module state) — otherwise the
+    //    previous user's "open breaker" is inherited by the new user.
+    clearAllCircuitBreakers();
     // 1) Clear Zustand persist (workspace state, integrations, tasks, agents, etc.)
     window.localStorage.removeItem("lovon-store-v1");
     // 2) Clear all vault keys (API keys stored per integration)
@@ -80,7 +87,7 @@ function clearLocalUserData() {
     }
     // 3) Clear sessionStorage too (in case anything uses it)
     window.sessionStorage.clear();
-    console.log(`[auth] cleared ${vaultKeys.length + 1} localStorage keys`);
+    console.log(`[auth] cleared ${vaultKeys.length + 1} localStorage keys + circuit breakers`);
   } catch (err) {
     console.warn("[auth] clearLocalUserData failed:", err);
   }
