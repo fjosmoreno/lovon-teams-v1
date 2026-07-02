@@ -314,6 +314,11 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
               setWizardPath(null);
               // Switch to bindings tab so user can bind the new integration
               setTab("bindings");
+              // P0: trigger auto-resume for any tasks blocked by rate limit
+              // (user just added a new key — perfect time to resume)
+              import("@/lib/lovon/engine").then(({ tryAutoResumeBlockedTasks }) => {
+                tryAutoResumeBlockedTasks({ reason: "provider-added" });
+              });
               return id;
             }}
             initialCapability={filterCapability !== "all" ? filterCapability : undefined}

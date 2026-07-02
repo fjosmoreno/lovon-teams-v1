@@ -1426,9 +1426,20 @@ async function delegateAndExecute(
     // LLM failed to produce a conclusion. Record a structured blocker so the agent
     // doesn't have to invent a diagnosis.
     const { makeBlocker } = await import("./blockerClassifier");
+    const isRateLimit = (execResult.error ?? "").toLowerCase().match(/429|rate.?limit|quota|tpm|rpm/);
+    const rateLimitedProvider = isRateLimit ? (execResult.error?.match(/(openai|anthropic|groq|openrouter|deepseek|gemini|nvidia|env-var):/i)?.[1] ?? "provedor LLM") : null;
+
+    // If this is a rate limit failure, set rateLimitedUntil so auto-resume can pick it up.
+    // Default to 2 minutes from now (most providers reset RPM within 60s, but TPM may take longer).
+    const rateLimitedUntil = isRateLimit ? Date.now() + 2 * 60 * 1000 : undefined;
+
     const llmBlocker = makeBlocker("LLM_FAILED", {
-      message: `LLM falhou ao gerar conclusão para a task. Erro: ${execResult.error ?? "desconhecido"}`,
-      requiredAction: `Verifique o Smart Routing — pode ser circuit breaker aberto (aguarde 60s), chave de API inválida, ou provider indisponível. Re-execute a task depois.`,
+      message: isRateLimit
+        ? `⏳ Rate limit atingido em todos os provedores configurados. ${execResult.error ?? ""} — o sistema vai retomar automaticamente em ~2 minutos (ou adicione uma nova API key em Integrações para retomar agora).`
+        : `LLM falhou ao gerar conclusão para a task. Erro: ${execResult.error ?? "desconhecido"}`,
+      requiredAction: isRateLimit
+        ? `Aguarde 2 min OU adicione uma nova chave de API em Integrações para retomar imediatamente. A task será re-executada automaticamente.`
+        : `Verifique se o provider LLM está respondendo (Integrações → Testar). Considere trocar de modelo. Re-execute a task.`,
       relatedEntity: { type: "task", id: taskId },
       createdBy: "engine",
       traceId: `task:${taskId}`,
@@ -1446,6 +1457,10 @@ async function delegateAndExecute(
               // preserve the raw error in the result field for debugging
               result: `**Erro ao gerar conclusão:** ${execResult.error ?? "desconhecido"}\n\n${execResult.raw ? `\n\nResposta bruta:\n\`\`\`\n${execResult.raw.slice(0, 500)}\n\`\`\`` : ""}`,
               updatedAt: Date.now(),
+              // P0: rate limit auto-resume tracking
+              rateLimitedUntil,
+              rateLimitedProvider: rateLimitedProvider ?? undefined,
+              rateLimitedMessage: isRateLimit ? `Rate limit em ${rateLimitedProvider}. Auto-resume em ~2 min.` : undefined,
             }
           : t
       ),
@@ -1457,7 +1472,9 @@ async function delegateAndExecute(
       agentId: workerId,
       agentName: worker.name,
       action: "failed",
-      message: `Falha ao gerar conclusão: ${execResult.error ?? "erro desconhecido"}. Task bloqueada com blocker LLM_FAILED.`,
+      message: isRateLimit
+        ? `⏳ Rate limit em todos provedores. Task "${task.title}" será re-executada automaticamente em ~2 min. Adicione outra API key em Integrações para retomar agora.`
+        : `Falha ao gerar conclusão: ${execResult.error ?? "erro desconhecido"}. Task bloqueada com blocker LLM_FAILED.`,
       taskId,
       accent: head.accent,
     });
@@ -2000,5 +2017,105 @@ export function ensureCompanyExists(ownerName?: string) {
       version: 1,
       updatedAt: Date.now(),
     });
+  }
+}
+
+// === P0: AUTO-RESUME TASKS BLOCKED BY RATE LIMIT ===
+// When a task is blocked because all providers returned 429, the engine sets
+// `task.rateLimitedUntil = now + 2min` (or similar). The dashboard polls this
+// function periodically. If the rate limit window has passed OR a new provider
+// is now available, the task is automatically re-executed.
+// User doesn't need to click "Re-executar" — the system recovers automatically.
+
+let autoResumeInFlight = false;
+let autoResumeInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startAutoResumePolling() {
+  if (typeof window === "undefined") return;
+  if (autoResumeInterval) return; // already started
+  // Poll every 15s — lightweight, just checks timestamps
+  autoResumeInterval = setInterval(() => {
+    tryAutoResumeBlockedTasks({ reason: "poll" });
+  }, 15_000);
+  // Also run once on start
+  setTimeout(() => tryAutoResumeBlockedTasks({ reason: "startup" }), 1000);
+}
+
+export function stopAutoResumePolling() {
+  if (autoResumeInterval) {
+    clearInterval(autoResumeInterval);
+    autoResumeInterval = null;
+  }
+}
+
+export async function tryAutoResumeBlockedTasks(opts: {
+  reason: "poll" | "provider-added" | "user-action" | "startup";
+  onlyTaskId?: string;
+}): Promise<{ resumed: number; skipped: number; reason: string }> {
+  if (autoResumeInFlight) {
+    return { resumed: 0, skipped: 0, reason: "already-running" };
+  }
+  autoResumeInFlight = true;
+  try {
+    const state = useLovonStore.getState();
+    const now = Date.now();
+    const candidates = state.tasks.filter((t) => {
+      if (onlyTaskId && t.id !== onlyTaskId) return false;
+      // Eligible: status is pending or blocked, AND has a rate limit timestamp
+      if (t.status !== "pending" && t.status !== "blocked" && t.status !== "failed") return false;
+      if (!t.rateLimitedUntil) return false;
+      return t.rateLimitedUntil <= now;
+    });
+    if (candidates.length === 0) {
+      return { resumed: 0, skipped: 0, reason: opts.reason };
+    }
+
+    // Check that there's at least 1 working provider (sanity check)
+    const hasAnyProvider = state.integrations.some((i) => {
+      if (i.status !== "active") return false;
+      if (typeof window !== "undefined") {
+        return window.localStorage.getItem(`vault:integration:${i.id}`);
+      }
+      return false;
+    });
+    if (!hasAnyProvider) {
+      return { resumed: candidates.length, skipped: 0, reason: "no-provider-but-rate-limit-passed" };
+    }
+
+    let resumed = 0;
+    let skipped = 0;
+    for (const task of candidates) {
+      try {
+        // Clear the rate limit flag and try to re-execute
+        useLovonStore.setState((s) => ({
+          tasks: s.tasks.map((t) =>
+            t.id === task.id
+              ? { ...t, rateLimitedUntil: undefined, rateLimitedProvider: undefined, rateLimitedMessage: undefined, blockers: [] }
+              : t
+          ),
+        }));
+        useLovonStore.getState().logActivity({
+          agentId: "system",
+          agentName: "Sistema",
+          action: "message",
+          message: `🔄 Auto-resume: rate limit de "${task.rateLimitedProvider ?? "provedor"}" liberou. Re-executando "${task.title}" automaticamente.`,
+          taskId: task.id,
+          accent: "blue",
+        });
+        const result = await reExecuteTask(task.id);
+        if (result.ok) {
+          resumed++;
+        } else {
+          skipped++;
+        }
+      } catch (err) {
+        console.error("[engine] auto-resume failed for task", task.id, err);
+        skipped++;
+      }
+    }
+
+    return { resumed, skipped, reason: opts.reason };
+  } finally {
+    autoResumeInFlight = false;
   }
 }

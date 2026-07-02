@@ -249,6 +249,11 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           allowedAgentSlugs: [],
         });
       }
+      // P0: trigger auto-resume for any tasks blocked by rate limit
+      // (user just added provider keys during onboarding)
+      import("@/lib/lovon/engine").then(({ tryAutoResumeBlockedTasks }) => {
+        tryAutoResumeBlockedTasks({ reason: "provider-added" });
+      });
       onComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar");

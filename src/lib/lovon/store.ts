@@ -96,6 +96,13 @@ export interface Task {
   // P0: how many times CEO auto-resolved blockers on this task. Caps at MAX_AUTO_RESOLVES
   // to prevent infinite loops when underlying issue (e.g., bad LLM provider) doesn't get fixed.
   autoResolveCount?: number;
+  // P0: rate limit tracking. When a task is blocked due to 429, the engine sets
+  // rateLimitedUntil to a timestamp ~2-5min in the future. The dashboard polls
+  // this field and auto-resumes the task when the timestamp passes (or when user
+  // adds a new provider key). Removes the "user has to click re-executar manually" flow.
+  rateLimitedUntil?: number;
+  rateLimitedProvider?: string; // which provider was rate-limited (e.g., "groq")
+  rateLimitedMessage?: string;  // human-readable context
 }
 
 export interface PartialReason {

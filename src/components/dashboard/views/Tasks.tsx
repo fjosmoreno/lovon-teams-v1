@@ -197,6 +197,20 @@ export function Tasks({ onNavigateToIntegrations }: { onNavigateToIntegrations?:
                             {dept.emoji} {dept.name}
                           </span>
                         )}
+                        {task.rateLimitedUntil && task.rateLimitedUntil > Date.now() && (
+                          <span
+                            className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-blue/10 text-neon-blue border border-neon-blue/30 flex items-center gap-1"
+                            title={task.rateLimitedMessage ?? "Rate limit — auto-resume em breve"}
+                          >
+                            <Clock className="w-2.5 h-2.5 animate-pulse" />
+                            Auto-resume em {Math.max(1, Math.ceil((task.rateLimitedUntil - Date.now()) / 1000))}s
+                          </span>
+                        )}
+                        {task.rateLimitedUntil && task.rateLimitedUntil <= Date.now() && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green border border-neon-green/30 flex items-center gap-1">
+                            <CheckCircle2 className="w-2.5 h-2.5" /> Pronto p/ retomar
+                          </span>
+                        )}
                         {subs.length > 0 && (
                           <span className="text-[9px] font-mono text-tech-gray flex items-center gap-1">
                             <ChevronDown className={`w-2.5 h-2.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />

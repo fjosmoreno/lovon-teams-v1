@@ -150,6 +150,20 @@ export function Dashboard({ onExit }: Props) {
     }
   }, [hydrated, user]);
 
+  // P0: start auto-resume polling — picks up rate-limited tasks when window passes
+  // or when a new provider becomes available.
+  useEffect(() => {
+    if (!hydrated) return;
+    import("@/lib/lovon/engine").then(({ startAutoResumePolling }) => {
+      startAutoResumePolling();
+    });
+    return () => {
+      import("@/lib/lovon/engine").then(({ stopAutoResumePolling }) => {
+        stopAutoResumePolling();
+      });
+    };
+  }, [hydrated]);
+
   const pendingCount = tasksPendingUnassigned;
 
   const renderView = () => {
