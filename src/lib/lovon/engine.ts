@@ -1052,6 +1052,83 @@ async function delegateAndExecute(
   }
 }
 
+// === P0: Manual re-execution of a pending/blocked task ===
+// Lets the user trigger re-execution from the UI when a worker got stuck.
+// Reconstructs the PlannedSubtask from store state and re-runs delegateAndExecute.
+// Resets status to pending, clears blockers, keeps expectedWorkProducts.
+export async function reExecuteTask(taskId: string): Promise<{ ok: boolean; error?: string }> {
+  const state = useLovonStore.getState();
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) {
+    return { ok: false, error: "Task não encontrada." };
+  }
+  if (task.status !== "pending" && task.status !== "blocked" && task.status !== "failed") {
+    return { ok: false, error: `Task está em status "${task.status}" — só é possível re-executar tasks pending/blocked/failed.` };
+  }
+  const ceo = state.agents.find((a) => a.role === "ceo");
+  if (!ceo) {
+    return { ok: false, error: "CEO agent não encontrado." };
+  }
+  // Resolve top task (mission root): walk parentTaskId chain up
+  let topTaskId = task.id;
+  let topTask = task;
+  let cursor: typeof task | undefined = task;
+  while (cursor?.parentTaskId) {
+    const parent: typeof task | undefined = state.tasks.find((t) => t.id === cursor!.parentTaskId);
+    if (!parent) break;
+    topTask = parent;
+    topTaskId = parent.id;
+    cursor = parent;
+  }
+  const mission = topTask.description ?? topTask.title ?? "Re-execução manual";
+  const companyName = state.company?.name;
+
+  // Determine department — if missing, try to infer from worker
+  const departmentId = task.departmentId ?? state.agents.find((a) => a.id === task.assignedTo)?.departmentId;
+  if (!departmentId) {
+    return { ok: false, error: "Não foi possível identificar o departamento da task." };
+  }
+  const dept = state.departments.find((d) => d.id === departmentId);
+  if (!dept) {
+    return { ok: false, error: `Departamento "${departmentId}" não existe.` };
+  }
+
+  // Reset task state for fresh execution
+  state.setTaskBlockers(taskId, []); // clear blockers
+  // Mark as pending + log
+  state.logActivity({
+    agentId: ceo.id,
+    agentName: ceo.name,
+    action: "message",
+    message: `Re-executando manualmente "${task.title}" (departamento: ${dept.name})...`,
+    taskId,
+    accent: "blue",
+  });
+
+  const subtask: PlannedSubtask = {
+    departmentId: dept.id,
+    title: task.title,
+    description: task.description ?? task.title,
+    acceptanceCriteria: task.acceptanceCriteria ?? [],
+  };
+
+  try {
+    await delegateAndExecute(subtask, ceo, topTaskId, mission, companyName);
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Erro desconhecido na re-execução.";
+    state.logActivity({
+      agentId: ceo.id,
+      agentName: ceo.name,
+      action: "failed",
+      message: `❌ Re-execução falhou: ${msg}`,
+      taskId,
+      accent: "orange",
+    });
+    return { ok: false, error: msg };
+  }
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1112,6 +1189,9 @@ function detectExpectedWorkProducts(
 // === P0: Parse work product blocks from the LLM conclusion ===
 // The agent emits >>>WORK_PRODUCT: type ... <<<END_WORK_PRODUCT blocks.
 // We parse the JSON inside, validate with Zod, and return ready-to-persist work products.
+// FALLBACK: if the agent didn't emit blocks, scan the conclusion for ```json code blocks
+// and infer the type from the JSON shape (heuristic). This makes marketing tasks succeed
+// even when the LLM returns plain text reports with embedded JSON.
 function parseWorkProductsFromConclusion(
   conclusion: string,
   sourceTaskId: string,
@@ -1120,45 +1200,217 @@ function parseWorkProductsFromConclusion(
   const { validateWorkProduct } = require("./work-products") as typeof import("./work-products");
   const results: import("./work-products").WorkProduct[] = [];
 
-  // Match all >>>WORK_PRODUCT: <type> ... <<<END_WORK_PRODUCT blocks
+  // 1. PRIMARY: match >>>WORK_PRODUCT: <type> ... <<<END_WORK_PRODUCT blocks
   const blockRegex = />>>WORK_PRODUCT:\s*(\w+)\s*\n([\s\S]*?)<<<END_WORK_PRODUCT/g;
   let match;
   while ((match = blockRegex.exec(conclusion)) !== null) {
     const type = match[1].trim();
     const jsonText = match[2].trim();
-
-    // Strip markdown code fences if present
-    const cleaned = jsonText
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    try {
-      const parsed = JSON.parse(cleaned);
-
-      // Ensure meta has the right fields
-      if (!parsed.meta) parsed.meta = {};
-      if (!parsed.meta.id) parsed.meta.id = `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-      parsed.meta.sourceTaskId = sourceTaskId;
-      if (!parsed.meta.createdAt) parsed.meta.createdAt = new Date().toISOString();
-      if (!parsed.meta.createdBy) {
-        parsed.meta.createdBy = { kind: "agent", agentSlug: agentName.toLowerCase().replace(/\s+/g, "-") };
-      }
-
-      // Validate with Zod
-      const validation = validateWorkProduct(parsed);
+    const wp = coerceToWorkProduct(jsonText, type, sourceTaskId, agentName);
+    if (wp) {
+      const validation = validateWorkProduct(wp);
       if (validation.success && validation.data) {
         results.push(validation.data);
       } else {
         console.error(`[parseWorkProducts] validation failed for ${type}:`, validation.error);
       }
-    } catch (err) {
-      console.error(`[parseWorkProducts] JSON parse failed for ${type}:`, err);
+    }
+  }
+
+  // 2. FALLBACK: scan ```json ... ``` blocks when primary regex found nothing.
+  // The LLM often returns structured JSON in fenced code blocks instead of the marker format.
+  if (results.length === 0) {
+    const jsonBlockRegex = /```(?:json)?\s*\n([\s\S]*?)```/g;
+    let jsonMatch;
+    while ((jsonMatch = jsonBlockRegex.exec(conclusion)) !== null) {
+      const jsonText = jsonMatch[1].trim();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        continue; // not valid JSON, skip
+      }
+      if (!parsed || typeof parsed !== "object") continue;
+
+      // Heuristic: infer the work product type from the JSON shape.
+      // The LLM often returns an array of items or a single object with sub-arrays.
+      const parsedObj = parsed as Record<string, unknown>;
+      const items = Array.isArray(parsed) ? parsed : extractItemsFromObject(parsedObj);
+      const inferredType = inferWorkProductType(parsedObj);
+
+      for (const item of items) {
+        const wp = coerceToWorkProduct(JSON.stringify(item), inferredType, sourceTaskId, agentName);
+        if (wp) {
+          const validation = validateWorkProduct(wp);
+          if (validation.success && validation.data) {
+            results.push(validation.data);
+          }
+        }
+      }
+      // If we got at least one inferred work product, stop scanning more blocks.
+      if (results.length > 0) break;
     }
   }
 
   return results;
+}
+
+// Helper: strip code fences + parse JSON + fill meta + return parsed object (or null).
+function coerceToWorkProduct(
+  jsonText: string,
+  declaredType: string,
+  sourceTaskId: string,
+  agentName: string
+): Record<string, unknown> | null {
+  // Strip markdown code fences if present
+  const cleaned = jsonText
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+
+  // Normalize type: lowercase, common aliases
+  const type = normalizeType(declaredType);
+
+  // Ensure meta
+  if (!parsed.meta) parsed.meta = {};
+  parsed.meta.type = type; // override with normalized type
+  if (!parsed.meta.id) parsed.meta.id = `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  parsed.meta.sourceTaskId = sourceTaskId;
+  if (!parsed.meta.createdAt) parsed.meta.createdAt = new Date().toISOString();
+  if (!parsed.meta.createdBy) {
+    parsed.meta.createdBy = { kind: "agent", agentSlug: agentName.toLowerCase().replace(/\s+/g, "-") };
+  }
+
+  // Fill required fields per type with sensible defaults if missing
+  ensureRequiredFields(parsed, type);
+
+  return parsed;
+}
+
+function normalizeType(t: string): string {
+  const lower = t.toLowerCase().trim();
+  const aliases: Record<string, string> = {
+    "campaign_brief": "campaign_brief",
+    "campaignbrief": "campaign_brief",
+    "brief": "campaign_brief",
+    "briefing": "campaign_brief",
+    "social_post_card": "social_post_card",
+    "socialpostcard": "social_post_card",
+    "post": "social_post_card",
+    "postcard": "social_post_card",
+    "social": "social_post_card",
+    "content_plan": "content_plan",
+    "contentplan": "content_plan",
+    "plan": "content_plan",
+    "calendar": "content_plan",
+    "creative_asset": "creative_asset",
+    "creativeasset": "creative_asset",
+    "asset": "creative_asset",
+    "image": "creative_asset",
+    "creative": "creative_asset",
+  };
+  return aliases[lower] ?? "campaign_brief"; // default
+}
+
+function inferWorkProductType(obj: unknown): string {
+  if (!obj || typeof obj !== "object") return "campaign_brief";
+  const o = obj as Record<string, unknown>;
+  const keys = Object.keys(o).map((k) => k.toLowerCase());
+
+  // campaign_brief signals: name + objective + kpis
+  if (
+    (keys.includes("kpis") || keys.includes("kpi")) &&
+    (keys.includes("objective") || keys.includes("objetivo"))
+  ) {
+    return "campaign_brief";
+  }
+
+  // social_post_card signals: hook + body + cta
+  if (
+    keys.includes("hook") &&
+    (keys.includes("body") || keys.includes("copy") || keys.includes("text")) &&
+    (keys.includes("cta") || keys.includes("calltoaction"))
+  ) {
+    return "social_post_card";
+  }
+
+  // content_plan signals: posts or calendar array
+  if (
+    keys.includes("posts") ||
+    keys.includes("calendar") ||
+    keys.includes("schedule") ||
+    keys.includes("cronograma")
+  ) {
+    return "content_plan";
+  }
+
+  // creative_asset signals: assets or images array
+  if (
+    keys.includes("assets") ||
+    keys.includes("images") ||
+    keys.includes("image_url") ||
+    keys.includes("url") ||
+    keys.includes("creative")
+  ) {
+    return "creative_asset";
+  }
+
+  // Default to campaign_brief if we see name + objective
+  if (keys.includes("name") && keys.includes("objective")) return "campaign_brief";
+
+  return "campaign_brief";
+}
+
+function extractItemsFromObject(obj: Record<string, unknown>): unknown[] {
+  // If the object has an array field with multiple items, return those.
+  const arrayKeys = ["posts", "calendar", "schedule", "assets", "images", "items", "social_posts", "cards", "list"];
+  for (const key of arrayKeys) {
+    const val = obj[key];
+    if (Array.isArray(val) && val.length > 0) return val;
+  }
+  // Otherwise treat the object as a single item
+  return [obj];
+}
+
+function ensureRequiredFields(parsed: Record<string, unknown>, type: string): void {
+  if (type === "campaign_brief") {
+    if (!parsed.name) parsed.name = parsed.title ?? "Campanha sem título";
+    if (!parsed.objective) parsed.objective = parsed.goal ?? parsed.summary ?? "Objetivo não especificado.";
+    if (!parsed.audience) parsed.audience = parsed.target ?? "Público geral";
+    if (!parsed.channels) parsed.channels = ["LinkedIn", "Instagram"];
+    if (!parsed.kpis) parsed.kpis = ["Alcance", "Engajamento"];
+    if (!parsed.timeline) parsed.timeline = "30 dias";
+    if (!parsed.budget) parsed.budget = "A definir";
+    if (!parsed.tone) parsed.tone = "Profissional";
+  } else if (type === "social_post_card") {
+    if (!parsed.platform) parsed.platform = "LinkedIn";
+    if (!parsed.hook) parsed.hook = parsed.headline ?? "Hook";
+    if (!parsed.body) parsed.body = parsed.copy ?? parsed.text ?? "Body";
+    if (!parsed.cta) parsed.cta = parsed.callToAction ?? "Saiba mais";
+    if (!parsed.hashtags) parsed.hashtags = [];
+  } else if (type === "content_plan") {
+    if (!parsed.name) parsed.name = parsed.title ?? "Plano de conteúdo";
+    if (!parsed.objective) parsed.objective = "Engajamento da audiência";
+    if (!parsed.duration) parsed.duration = "30 dias";
+    if (!parsed.audience) parsed.audience = "Público geral";
+    if (!parsed.posts) parsed.posts = [];
+    if (!parsed.platforms) parsed.platforms = ["LinkedIn", "Instagram"];
+  } else if (type === "creative_asset") {
+    if (!parsed.name) parsed.name = "Asset criativo";
+    if (!parsed.format) parsed.format = parsed.type ?? "image/png";
+    if (!parsed.url) parsed.url = parsed.image_url ?? "https://placeholder.local/asset.png";
+    if (!parsed.usage_rights) parsed.usage_rights = "Uso interno";
+    if (!parsed.dimensions) parsed.dimensions = "1080x1080";
+  }
 }
 
 // Parse a structured email block from the LLM conclusion.

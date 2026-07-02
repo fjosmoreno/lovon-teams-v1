@@ -14,8 +14,10 @@ import {
   XCircle,
   Loader2,
   HelpCircle,
+  RotateCw,
 } from "lucide-react";
 import { useLovonStore, Task } from "@/lib/lovon/store";
+import { reExecuteTask } from "@/lib/lovon/engine";
 import { WhyBlockedModal } from "./WhyBlockedModal";
 
 const ACCENT_TEXT: Record<string, string> = {
@@ -55,6 +57,23 @@ export function Tasks({ onNavigateToIntegrations }: { onNavigateToIntegrations?:
   const [modalTaskId, setModalTaskId] = useState<string | null>(null);
   const [whyBlockedTaskId, setWhyBlockedTaskId] = useState<string | null>(null);
   const [partialTaskId, setPartialTaskId] = useState<string | null>(null);
+  const [reExecutingId, setReExecutingId] = useState<string | null>(null);
+  const [reExecuteError, setReExecuteError] = useState<string | null>(null);
+
+  async function handleReExecute(taskId: string) {
+    setReExecutingId(taskId);
+    setReExecuteError(null);
+    try {
+      const result = await reExecuteTask(taskId);
+      if (!result.ok) {
+        setReExecuteError(result.error ?? "Erro desconhecido ao re-executar.");
+      }
+    } catch (err) {
+      setReExecuteError(err instanceof Error ? err.message : "Erro desconhecido.");
+    } finally {
+      setReExecutingId(null);
+    }
+  }
 
   // Always derive the modal task from current store state so it stays in sync
   const modalTask = modalTaskId ? tasks.find((t) => t.id === modalTaskId) ?? null : null;
@@ -209,6 +228,24 @@ export function Tasks({ onNavigateToIntegrations }: { onNavigateToIntegrations?:
                                 {task.blockers.length}
                               </span>
                             )}
+                          </button>
+                        )}
+                        {(task.status === "blocked" || task.status === "pending" || task.status === "failed") && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReExecute(task.id);
+                            }}
+                            disabled={reExecutingId === task.id}
+                            className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-blue/10 text-neon-blue border border-neon-blue/30 hover:bg-neon-blue/20 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Re-executar task manualmente (chama LLM novamente)"
+                          >
+                            {reExecutingId === task.id ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            ) : (
+                              <RotateCw className="w-2.5 h-2.5" />
+                            )}
+                            Re-executar
                           </button>
                         )}
                         {task.status === "in_review" && (
