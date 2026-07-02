@@ -3646,6 +3646,7 @@ export const useLovonStore = create<LovonState>()(
 
       updateCompanyConfig: (partial) => {
         set((state) => {
+          console.log("[store] updateCompanyConfig called with:", Object.keys(partial).join(", "), "| existing rules:", state.companyConfig?.rules?.length ?? "none");
           const current = state.companyConfig;
           const updated: CompanyConfig = current
             ? { ...current, ...partial, version: current.version + 1, updatedAt: Date.now() }

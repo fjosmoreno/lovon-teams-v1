@@ -19,12 +19,40 @@ export class CompanyCoreMissingError extends Error {
   }
 }
 
+// Default Company Core Prompt — used as last-resort fallback when rules are empty
+// so we never block the user from running their first mission.
+const DEFAULT_COMPANY_CORE: CompanyConfig = {
+  industry: "Tecnologia / SaaS",
+  productSummary: "Plataforma de agentes de IA autônomos para empresas",
+  targetAudience: "PMEs e startups brasileiras",
+  valueProposition: "Permite rodar times de agentes IA com LLMs gratuitos, sem custos de API",
+  differentiators: "Open-source, multi-provider, modelo free-first, fallback automático",
+  regionsAndLanguage: "Brasil, PT-BR",
+  positioning: "Acessível, técnico, inovador",
+  tone: "direto, profissional, amigável, sem jargão",
+  defaultGoals: "automatizar tarefas operacionais, aumentar produtividade, reduzir custos",
+  rules: [
+    "Responda sempre em português brasileiro (PT-BR) a menos que solicitado outro idioma",
+    "Seja direto e objetivo — prefira bullet points a parágrafos longos",
+    "Nunca invente dados, métricas ou citações — se não souber, diga 'não tenho essa informação'",
+    "Priorize segurança: nunca exponha API keys, senhas ou dados sensíveis em conclusões",
+    "Quando bloquear, explique o motivo de forma clara e sugira a próxima ação",
+  ],
+  autonomyLevel: 1,
+  version: 1,
+  updatedAt: 0,
+};
+
 export function enforceCompanyCore(companyConfig: CompanyConfig | null | undefined): CompanyConfig {
   if (!companyConfig) {
-    throw new CompanyCoreMissingError();
+    // Last-resort: return defaults instead of throwing. User can edit later.
+    console.warn("[enforcement] companyConfig missing — using defaults");
+    return DEFAULT_COMPANY_CORE;
   }
   if (!companyConfig.rules || companyConfig.rules.length === 0) {
-    throw new CompanyCoreMissingError();
+    // Last-resort: patch missing rules with defaults. Keep user's other fields.
+    console.warn("[enforcement] companyConfig.rules empty — patching with defaults");
+    return { ...companyConfig, rules: DEFAULT_COMPANY_CORE.rules };
   }
   return companyConfig;
 }
