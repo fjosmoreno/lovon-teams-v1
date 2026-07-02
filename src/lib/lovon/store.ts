@@ -552,7 +552,7 @@ export const CORE_TEAM_PRESETS: Record<"minimal" | "default" | "custom", CoreTea
     },
     {
       slug: "sales-lead",
-      name: "Sales Lead",
+      name: "Sales Lead (VP de Vendas)",
       role: "department-head",
       departmentId: "sales",
       emoji: "▲",
