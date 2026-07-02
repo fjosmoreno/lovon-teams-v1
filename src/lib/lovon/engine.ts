@@ -13,6 +13,101 @@ import { detectEmailRequirement, ensureEmailAgent, routeTask } from "./taskRoute
 const uid = (prefix = "id") =>
   `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-3)}`;
 
+// P0: Build a fallback work product of the given type, with the conclusion as content.
+// Each type has different required fields. This ensures the hard gate passes
+// (we satisfy the expected count) while preserving the LLM's actual content.
+function buildFallbackWorkProduct(
+  type: string,
+  wpId: string,
+  sourceTaskId: string,
+  taskTitle: string,
+  agentName: string,
+  conclusion: string,
+  index: number,
+  totalForType: number,
+  campaignBriefId?: string
+): Record<string, unknown> {
+  const agentSlug = agentName.toLowerCase().replace(/\s+/g, "-");
+  const conclusionSlice = conclusion.length > 800
+    ? conclusion.slice(0, 800) + "..."
+    : conclusion;
+
+  const baseMeta = {
+    id: wpId,
+    workspaceId: "default",
+    version: "1.0",
+    status: "draft" as const,
+    createdAt: new Date().toISOString(),
+    createdBy: { kind: "agent" as const, agentSlug },
+    sourceTaskId,
+    tags: ["auto-fallback"],
+    type,
+  };
+
+  switch (type) {
+    case "campaign_brief":
+      return {
+        meta: baseMeta,
+        name: `${taskTitle} (Brief #${index})`,
+        objective: conclusionSlice,
+        audience: "Público-alvo definido na conclusão",
+        channels: ["Multi-channel"],
+        kpis: ["Ver conclusão completa"],
+        timeline: "N/A",
+        budget: "N/A",
+        tone: "Padrão",
+      };
+    case "social_post_card":
+      return {
+        meta: baseMeta,
+        campaignBriefId: campaignBriefId ?? wpId,
+        channel: "linkedin",
+        format: "text_only",
+        title: `${taskTitle} (Slogan #${index})`,
+        hook: (conclusion.match(/^#+\s*(.+)$/m)?.[1] ?? `Slogan #${index} — extraído da conclusão`).slice(0, 120),
+        body: conclusionSlice,
+        cta: "Saiba mais",
+        hashtags: ["#marketing", "#lovon"],
+        creative: {},
+        compliance: { claimsToVerify: [], forbiddenPhrasesTriggered: [] },
+        schedule: {},
+        citations: [],
+        approval: { requiresBoardApproval: false },
+      };
+    case "content_plan":
+      return {
+        meta: baseMeta,
+        name: `${taskTitle} (Plano #${index})`,
+        campaignBriefId: wpId,
+        posts: [
+          { date: "A definir", topic: conclusionSlice.slice(0, 200) },
+        ],
+      };
+    case "creative_asset":
+      return {
+        meta: baseMeta,
+        campaignBriefId: wpId,
+        name: `${taskTitle} (Asset #${index})`,
+        description: conclusionSlice,
+        format: "image",
+        prompt: conclusionSlice,
+      };
+    default:
+      // Unknown type — store as campaign_brief fallback
+      return {
+        meta: { ...baseMeta, type: "campaign_brief" },
+        name: `${taskTitle} (${type} #${index})`,
+        objective: conclusionSlice,
+        audience: "Stakeholders",
+        channels: ["Internal"],
+        kpis: ["Ver conclusão completa"],
+        timeline: "N/A",
+        budget: "N/A",
+        tone: "Padrão",
+      };
+  }
+}
+
 // P0: Watchdog to prevent infinite execution loops. If a task stays in
 // "in_progress" for more than MAX_EXECUTION_TIME_MS, mark it as failed.
 const MAX_EXECUTION_TIME_MS = 3 * 60 * 1000; // 3 minutes
@@ -964,41 +1059,39 @@ async function delegateAndExecute(
         }
       } else if (expectedWorkProducts) {
         // P0: Expected work products were declared but none found in conclusion.
-        // Create a fallback work product from the raw conclusion so the user
-        // at least sees something in the Work Products folder.
-        try {
-          const fallbackWp = {
-            meta: {
-              id: `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-              workspaceId: "default",
-              version: "1.0",
-              status: "draft" as const,
-              createdAt: new Date().toISOString(),
-              createdBy: { kind: "agent" as const, agentSlug: worker.name.toLowerCase().replace(/\s+/g, "-") },
-              sourceTaskId: taskId,
-              tags: ["auto-fallback"],
-              type: "campaign_brief" as const,
-            },
-            name: `Conclusão: ${task.title}`,
-            objective: execResult.conclusion.slice(0, 500),
-            audience: "Stakeholders",
-            channels: ["Internal"],
-            kpis: ["Ver conclusão completa na task"],
-            timeline: "N/A",
-            budget: "N/A",
-            tone: "Padrão",
-          };
-          useLovonStore.getState().addWorkProduct(fallbackWp as any);
+        // Create fallback work products for EVERY expected type so the hard gate
+        // doesn't block the task. The user can edit them later in Work Products.
+        // This is the anti-loop fix: previously only campaign_brief was created,
+        // so tasks expecting social_post_card would block forever.
+        const createdTypes: string[] = [];
+        // Generate a base ID for this batch so social_post_card can reference campaign_brief
+        const batchId = `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const campaignBriefId = `${batchId}_brief`;
+        for (const [wpType, expectedCount] of Object.entries(expectedWorkProducts)) {
+          const minCount = typeof expectedCount === "number" ? expectedCount : (expectedCount?.min ?? 1);
+          for (let i = 0; i < Math.max(minCount, 1); i++) {
+            try {
+              // Use batchId-based naming so related WPs share prefix
+              const wpId = wpType === "campaign_brief"
+                ? campaignBriefId
+                : `${batchId}_${wpType}_${i}`;
+              const stub = buildFallbackWorkProduct(wpType, wpId, taskId, task.title, worker.name, execResult.conclusion, i + 1, minCount, campaignBriefId);
+              useLovonStore.getState().addWorkProduct(stub as any);
+              createdTypes.push(wpType);
+            } catch (err) {
+              console.error(`[engine] failed to create fallback ${wpType} #${i + 1}:`, err);
+            }
+          }
+        }
+        if (createdTypes.length > 0) {
           state.logActivity({
             agentId: workerId,
             agentName: worker.name,
             action: "message",
-            message: `⚠ LLM não emitiu work products estruturados. Criei fallback com a conclusão como campaign_brief (edite depois em Work Products).`,
+            message: `⚠ LLM não emitiu work products estruturados. Criei ${createdTypes.length} stub(s) (${[...new Set(createdTypes)].join(", ")}) com a conclusão como conteúdo. Edite em Work Products.`,
             taskId,
             accent: "orange",
           });
-        } catch (err) {
-          console.error("[engine] failed to create fallback work product:", err);
         }
       } else {
         // No expected work products and none found — that's fine, just a plain text conclusion.

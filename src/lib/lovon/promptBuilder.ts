@@ -178,7 +178,47 @@ LEMBRE-SE:
 - Use "recomendo" em vez de "decidimos".
 - Seja CONCISO. Textão é luxo e quebra. Bullets curtos são melhores.
 
-Esta é a sua entrega — não um plano futuro.`;
+Esta é a sua entrega — não um plano futuro.
+
+# 🚨 WORK PRODUCTS (CRÍTICO — NÃO PULE ESTA SEÇÃO)
+
+Se a task exige artefatos concretos (campaign_brief, social_post_card, content_plan, creative_asset),
+você DEVE emitir ao final da resposta UM BLOCO por artefato, no formato EXATO abaixo.
+Sem esses blocos, a task fica BLOQUEADA e o CEO re-executa em loop infinito.
+
+FORMATO DO BLOCO (copie exatamente):
+\`\`\`
+>>>WORK_PRODUCT: social_post_card
+{
+  "campaignBriefId": "wp_qualquer_id_aqui",
+  "channel": "linkedin",
+  "format": "text_only",
+  "title": "Título do post",
+  "hook": "Linha de impacto (1 frase)",
+  "body": "Corpo do post (2-4 frases)",
+  "cta": "Call to action",
+  "hashtags": ["#tag1", "#tag2"],
+  "creative": {},
+  "compliance": { "claimsToVerify": [], "forbiddenPhrasesTriggered": [] },
+  "schedule": {},
+  "citations": [],
+  "approval": { "requiresBoardApproval": false }
+}
+<<<END_WORK_PRODUCT
+\`\`\`
+
+Repita o bloco \`>>>WORK_PRODUCT: <tipo> ... <<<END_WORK_PRODUCT\` para cada artefato.
+Tipos válidos: campaign_brief, social_post_card, content_plan, creative_asset.
+
+EXEMPLO para "Criar 3 slogans para Lovon":
+>>>WORK_PRODUCT: social_post_card
+{"campaignBriefId":"wp_brief_001","channel":"linkedin","format":"text_only","title":"Slogan 1","hook":"IA que pensa junto com você","body":"Lovon: agentes autônomos que executam sua estratégia de ponta a ponta. Sem código. Sem espera. Só resultado.","cta":"Teste grátis","hashtags":["#IA","#Automação"],"creative":{},"compliance":{"claimsToVerify":[],"forbiddenPhrasesTriggered":[]},"schedule":{},"citations":[],"approval":{"requiresBoardApproval":false}}
+<<<END_WORK_PRODUCT
+>>>WORK_PRODUCT: social_post_card
+{"campaignBriefId":"wp_brief_001","channel":"linkedin","format":"text_only","title":"Slogan 2","hook":"Sua equipe de IA, em 2 minutos","body":"Da missão à execução: Lovon monta times de agentes que entregam. Você foca no que importa.","cta":"Comece agora","hashtags":["#Lovon","#Agentes"],"creative":{},"compliance":{"claimsToVerify":[],"forbiddenPhrasesTriggered":[]},"schedule":{},"citations":[],"approval":{"requiresBoardApproval":false}}
+<<<END_WORK_PRODUCT
+
+NÃO ESQUEÇA os blocos. SEM ELES, A TASK NÃO CONCLUI.`;
 }
 
 // === Camada D — KB Retrieved Context ===
