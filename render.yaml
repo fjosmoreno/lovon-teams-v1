@@ -5,11 +5,11 @@ services:
     plan: free
     region: oregon
     buildCommand: "npm install --legacy-peer-deps --include=dev && npx prisma generate && npx prisma db push --skip-generate && npm run build"
-    startCommand: "NODE_ENV=production HOSTNAME=0.0.0.0 node .next/standalone/server.js"
+    startCommand: "cd /opt/render/project/src && NODE_ENV=production HOSTNAME=0.0.0.0 DATABASE_URL=file:/opt/render/project/src/db/custom.db node .next/standalone/server.js"
     healthCheckPath: /
     envVars:
       - key: DATABASE_URL
-        value: file:./db/custom.db
+        value: file:/opt/render/project/src/db/custom.db
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL
