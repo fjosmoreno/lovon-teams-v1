@@ -101,11 +101,13 @@ async function callAgentAPI(payload: {
       const errMsg = `${providerConfig.provider}: ${data.error ?? `HTTP ${res.status}`}`;
       errors.push(errMsg);
       if (agentForLog) {
+        // Show URL + model so user can see exactly what was sent
+        const detail = data.error ?? `HTTP ${res.status}`;
         useLovonStore.getState().logActivity({
           agentId: agentForLog.id,
           agentName: agentForLog.name,
           action: "failed",
-          message: `✗ Provider ${providerConfig.provider} falhou: ${data.error ?? `HTTP ${res.status}`}. Tentando próximo...`,
+          message: `✗ ${providerConfig.provider} → ${providerConfig.model} → ${detail.slice(0, 200)}`,
           accent: "orange",
         });
       }
@@ -126,7 +128,9 @@ async function callAgentAPI(payload: {
 
 // Read per-user LLM providers from the Zustand store.
 // Returns ALL enabled AI integrations (in order), each with credentials read from localStorage vault.
-// Returns empty array if none configured.
+// Also appends Render env vars (LOVON_LLM_BASE_URL + LOVON_LLM_API_KEY + LOVON_LLM_MODEL)
+// as last-resort fallback if client-side integrations are missing.
+// Returns empty array if nothing is configured anywhere.
 function resolveProviderConfigForEngine(): Array<{
   baseUrl: string;
   apiKey: string;
@@ -146,6 +150,7 @@ function resolveProviderConfigForEngine(): Array<{
       gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
     };
     const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string }> = [];
+    // 1) Client-side integrations (per-user, configurable in Lovon UI)
     for (const integration of state.integrations) {
       if (integration.status !== "active") continue;
       if (!aiProviders.includes(integration.providerKey)) continue;
@@ -156,6 +161,16 @@ function resolveProviderConfigForEngine(): Array<{
       if (!baseUrl) continue;
       const model = (cfg.models as string[] | undefined)?.[0];
       out.push({ baseUrl, apiKey, model, provider: integration.providerKey });
+    }
+    // 2) Server-side env vars (Render → Environment) as last-resort fallback
+    // User can paste a key in Render dashboard → no client-side vault complexity
+    if (process.env.LOVON_LLM_BASE_URL && process.env.LOVON_LLM_API_KEY) {
+      out.push({
+        baseUrl: process.env.LOVON_LLM_BASE_URL.replace(/\/+$/, ""),
+        apiKey: process.env.LOVON_LLM_API_KEY,
+        model: process.env.LOVON_LLM_MODEL,
+        provider: "env-var",
+      });
     }
     return out;
   } catch (err) {
