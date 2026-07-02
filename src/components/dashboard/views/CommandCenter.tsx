@@ -25,6 +25,7 @@ import {
 import { useLovonStore } from "@/lib/lovon/store";
 import { useRealMetrics, useRealInsights } from "@/lib/lovon/realMetrics";
 import { DEPARTMENT_TEMPLATES } from "@/lib/lovon/data";
+import { useAuth } from "@/lib/lovon/AuthContext";
 
 type View = "command" | "overview" | "ceo" | "company" | "tasks" | "activity" | "agents" | "create" | "market" | "routing" | "analytics" | "settings";
 
@@ -72,6 +73,7 @@ const TASK_STATUS_PENDENCIA: Record<string, { label: string; color: string; bg: 
 };
 
 export function CommandCenter({ onNavigate }: Props) {
+  const { user } = useAuth();
   const company = useLovonStore((s) => s.company);
   const agents = useLovonStore((s) => s.agents);
   const tasks = useLovonStore((s) => s.tasks);
@@ -83,7 +85,10 @@ export function CommandCenter({ onNavigate }: Props) {
   const { recommendations, alerts } = useRealInsights();
 
   const ceo = agents.find((a) => a.role === "ceo");
-  const ownerName = company?.ownerName || "Fernando";
+  // P0: fall back to useAuth().user.name when company.ownerName is empty
+  // (no more hardcoded "Fernando" — that was the source of "todas as contas
+  // mostravam o nome errado no greeting")
+  const ownerName = company?.ownerName || user?.name || "você";
   const greeting = getGreeting();
 
   const pendingAlerts = alerts;

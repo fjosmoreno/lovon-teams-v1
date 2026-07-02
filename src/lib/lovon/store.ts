@@ -1119,7 +1119,7 @@ interface LovonState {
   dismissedInsightIds: string[];
 
   // actions
-  createCompany: (name: string, mission: string, budget: Company["budget"], monthlyCap: number) => void;
+  createCompany: (name: string, mission: string, budget: Company["budget"], monthlyCap: number, ownerName?: string) => void;
   spawnSubagent: (parentId: string, partial: Partial<Agent> & { name: string; role: AgentRole }) => string;
   assignAgentToDepartment: (agentId: string, departmentId: string) => void;
   createTask: (partial: Partial<Task> & { title: string; createdBy: string }) => string;
@@ -1569,7 +1569,7 @@ export const useLovonStore = create<LovonState>()(
       resetInProgress: false,
       resetIdempotencyKeys: [],
 
-      createCompany: (name, mission, budget, monthlyCap) => {
+      createCompany: (name, mission, budget, monthlyCap, ownerName) => {
         const companyId = uid("co");
         const ceoId = uid("agent");
         const execDeptId = "executive";
@@ -1617,6 +1617,7 @@ export const useLovonStore = create<LovonState>()(
           budget,
           monthlyCap,
           createdAt: Date.now(),
+          ownerName, // P0: store account owner name for personalized greetings
         };
 
         set({

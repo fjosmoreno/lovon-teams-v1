@@ -1607,14 +1607,28 @@ export function manualSpawnSubagent(
 }
 
 // === Seed a default company on first dashboard load ===
-export function ensureCompanyExists() {
+export function ensureCompanyExists(ownerName?: string) {
   const state = useLovonStore.getState();
   if (!state.company) {
+    // Try to get the current user's name from the auth context. Since AuthContext
+    // lives in a different module and we want to keep this pure (server-safe),
+    // we use a safe lookup: read from localStorage if present.
+    let ownerName: string | undefined;
+    if (typeof window !== "undefined") {
+      try {
+        // AuthContext stores the user in React state, not localStorage directly.
+        // But the session cookie's user id is in /api/auth/session. We don't fetch
+        // it here — instead, pass it via the parameter from the React component.
+        // If the React component doesn't pass it, fall back to "você" via CommandCenter.
+        ownerName = undefined;
+      } catch {}
+    }
     state.createCompany(
       "Lovon Teams",
       "Democratizar acesso a agentes de IA autônomos para qualquer empresa.",
       "free",
-      0
+      0,
+      ownerName
     );
   }
   // P0: Also seed default Company Core (DNA) so enforcement passes on first LLM call.

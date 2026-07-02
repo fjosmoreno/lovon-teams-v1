@@ -150,10 +150,10 @@ export function Dashboard({ onExit }: Props) {
   // Auto-seed a default company + Company Core DNA on every dashboard load
   // (idempotent — won't overwrite existing config)
   useEffect(() => {
-    if (hydrated) {
-      ensureCompanyExists();
+    if (hydrated && user) {
+      ensureCompanyExists(user.name);
     }
-  }, [hydrated]);
+  }, [hydrated, user]);
 
   const pendingCount = tasksPendingUnassigned;
 
