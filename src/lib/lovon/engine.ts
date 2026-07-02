@@ -100,6 +100,69 @@ async function callAgentAPI(payload: {
           providerUsed: providerConfig.provider,
         };
       }
+      // === Anti-rate-limit logic ===
+      // If 429, try ONE retry with exponential backoff before moving to next provider.
+      // Many providers (Gemini, OpenRouter) return 429 even on transient spikes.
+      // A short wait often resolves it without needing to switch models entirely.
+      const is429 = res.status === 429 || (data.error && /\b(429|rate.?limit|quota|tpm|rpm)\b/i.test(data.error));
+      if (is429 && providerConfig.integrationId) {
+        const retryAfterHint = data.retryAfter ?? 2; // seconds
+        const waitSec = Math.min(retryAfterHint, 5); // cap at 5s to not block the chain
+        if (agentForLog) {
+          useLovonStore.getState().logActivity({
+            agentId: agentForLog.id,
+            agentName: agentForLog.name,
+            action: "thinking",
+            message: `⏳ Rate limit no ${providerConfig.model}. Esperando ${waitSec}s e tentando de novo...`,
+            accent: "blue",
+          });
+        }
+        await new Promise((r) => setTimeout(r, waitSec * 1000));
+        // Retry once
+        try {
+          const retryRes = await fetch("/api/lovon/agent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, providerConfig }),
+          });
+          const retryData = await retryRes.json();
+          if (retryData.success) {
+            useLovonStore.getState().setLastLLMError(null);
+            if (agentForLog) {
+              useLovonStore.getState().logActivity({
+                agentId: agentForLog.id,
+                agentName: agentForLog.name,
+                action: "completed",
+                message: `✓ Retry no ${providerConfig.model} funcionou.`,
+                accent: "green",
+              });
+            }
+            return {
+              success: true,
+              conclusion: retryData.conclusion,
+              plan: retryData.plan,
+              retrievedDocs: retryData.retrievedDocs,
+              providerUsed: providerConfig.provider,
+            };
+          }
+          // Retry also failed — append error and continue to next
+          errors.push(`${providerConfig.provider}/${providerConfig.model}: rate limit (após retry)`);
+          if (agentForLog) {
+            useLovonStore.getState().logActivity({
+              agentId: agentForLog.id,
+              agentName: agentForLog.name,
+              action: "failed",
+              message: `✗ Rate limit persistente em ${providerConfig.model}. Tentando próximo modelo...`,
+              accent: "orange",
+            });
+          }
+          continue; // next model/provider
+        } catch (retryErr) {
+          // Retry threw — continue to next
+          errors.push(`${providerConfig.provider}/${providerConfig.model}: rate limit + retry failed`);
+          continue;
+        }
+      }
       const errMsg = `${providerConfig.provider}: ${data.error ?? `HTTP ${res.status}`}`;
       errors.push(errMsg);
       if (agentForLog) {
@@ -135,6 +198,8 @@ async function callAgentAPI(payload: {
 
 // Read per-user LLM providers from the Zustand store.
 // Returns ALL enabled AI integrations (in order), each with credentials read from localStorage vault.
+// If an integration has multiple models configured (e.g., OpenRouter with 4 free models),
+// each model becomes its own entry in the chain → on 429, the next model takes over automatically.
 // Also appends Render env vars (LOVON_LLM_BASE_URL + LOVON_LLM_API_KEY + LOVON_LLM_MODEL)
 // as last-resort fallback if client-side integrations are missing.
 // Returns empty array if nothing is configured anywhere.
@@ -143,6 +208,8 @@ function resolveProviderConfigForEngine(): Array<{
   apiKey: string;
   model?: string;
   provider: string;
+  integrationId?: string;
+  retryAfterHint?: number;
 }> {
   if (typeof window === "undefined") return [];
   try {
@@ -156,7 +223,7 @@ function resolveProviderConfigForEngine(): Array<{
       deepseek: "https://api.deepseek.com/v1",
       gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
     };
-    const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string }> = [];
+    const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string; integrationId?: string }> = [];
     // 1) Client-side integrations (per-user, configurable in Lovon UI)
     for (const integration of state.integrations) {
       if (integration.status !== "active") continue;
@@ -166,18 +233,42 @@ function resolveProviderConfigForEngine(): Array<{
       const cfg = integration.config ?? {};
       const baseUrl = (cfg.baseUrl as string | undefined) ?? defaults[integration.providerKey];
       if (!baseUrl) continue;
-      const model = (cfg.models as string[] | undefined)?.[0];
-      out.push({ baseUrl, apiKey, model, provider: integration.providerKey });
+      // EXPAND: if multiple models configured, each model becomes a fallback entry
+      // This is the key anti-rate-limit trick: when model A hits 429, model B takes over.
+      const models = (cfg.models as string[] | undefined) ?? [];
+      if (models.length === 0) {
+        // No specific model — let provider use its default
+        out.push({ baseUrl, apiKey, model: undefined, provider: integration.providerKey, integrationId: integration.id });
+      } else {
+        for (const model of models) {
+          if (!model) continue;
+          out.push({ baseUrl, apiKey, model, provider: integration.providerKey, integrationId: integration.id });
+        }
+      }
     }
     // 2) Server-side env vars (Render → Environment) as last-resort fallback
     // User can paste a key in Render dashboard → no client-side vault complexity
     if (process.env.LOVON_LLM_BASE_URL && process.env.LOVON_LLM_API_KEY) {
-      out.push({
-        baseUrl: process.env.LOVON_LLM_BASE_URL.replace(/\/+$/, ""),
-        apiKey: process.env.LOVON_LLM_API_KEY,
-        model: process.env.LOVON_LLM_MODEL,
-        provider: "env-var",
-      });
+      const envModel = process.env.LOVON_LLM_MODEL;
+      if (envModel) {
+        // Multiple env-var models (comma-separated) become multiple fallback entries
+        const envModels = envModel.split(",").map((m) => m.trim()).filter(Boolean);
+        for (const model of envModels) {
+          out.push({
+            baseUrl: process.env.LOVON_LLM_BASE_URL!.replace(/\/+$/, ""),
+            apiKey: process.env.LOVON_LLM_API_KEY!,
+            model,
+            provider: "env-var",
+          });
+        }
+      } else {
+        out.push({
+          baseUrl: process.env.LOVON_LLM_BASE_URL.replace(/\/+$/, ""),
+          apiKey: process.env.LOVON_LLM_API_KEY,
+          model: process.env.LOVON_LLM_MODEL,
+          provider: "env-var",
+        });
+      }
     }
     return out;
   } catch (err) {

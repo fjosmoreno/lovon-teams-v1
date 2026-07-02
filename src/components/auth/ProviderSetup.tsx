@@ -78,15 +78,17 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: "openrouter",
     name: "OpenRouter",
     emoji: "🌐",
-    tagline: "1 key = 20+ modelos grátis. O mais flexível.",
+    tagline: "1 key = 4 modelos grátis. Fallback automático entre eles evita rate limit.",
     isFree: true,
     signupMinutes: 2,
     docsUrl: "https://openrouter.ai/settings/keys",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "google/gemma-2-9b-it:free",
     recommendedModels: [
-      { id: "google/gemma-2-9b-it:free", label: "Gemma 2 9B (free)", isFree: true },
+      { id: "google/gemma-2-9b-it:free", label: "Gemma 2 9B (free) ⭐", isFree: true },
       { id: "mistralai/mistral-7b-instruct:free", label: "Mistral 7B (free)", isFree: true },
+      { id: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free)", isFree: true },
+      { id: "deepseek/deepseek-r1:free", label: "DeepSeek R1 (free)", isFree: true },
     ],
   },
   {
@@ -133,9 +135,15 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
   const createIntegration = useLovonStore((s) => s.createIntegration);
 
   // === Primary provider (the one user picks first) ===
-  const [primaryId, setPrimaryId] = useState<string>("gemini");
+  const [primaryId, setPrimaryId] = useState<string>("openrouter");
   const [primaryKey, setPrimaryKey] = useState("");
-  const [primaryModel, setPrimaryModel] = useState<string>("gemini-2.0-flash");
+  const [primaryModel, setPrimaryModel] = useState<string>("google/gemma-2-9b-it:free");
+  const [primaryModels, setPrimaryModels] = useState<string[]>([
+    "google/gemma-2-9b-it:free",
+    "mistralai/mistral-7b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-r1:free",
+  ]);
   const [showPrimaryKey, setShowPrimaryKey] = useState(false);
   const [primaryTestResult, setPrimaryTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [primaryTesting, setPrimaryTesting] = useState(false);
@@ -194,7 +202,8 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
     }
     setSaving(true);
     try {
-      // Save primary
+      // Save primary — include ALL models for anti-rate-limit rotation
+      const primaryModelsToSave = primaryModels.length > 0 ? primaryModels : [primaryModel];
       await createIntegration({
         name: `${primary.name} (${primary.isFree ? "Free" : "Pago"})`,
         providerKey: primary.id as any,
@@ -203,7 +212,7 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
         credentialsValue: primaryKey.trim(),
         config: {
           baseUrl: primary.defaultBaseUrl,
-          models: [primaryModel],
+          models: primaryModelsToSave,
         },
         allowedAgentSlugs: [],
       });
@@ -285,7 +294,11 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
                 const id = e.target.value;
                 setPrimaryId(id);
                 const p = PROVIDER_CATALOG.find((x) => x.id === id);
-                if (p) setPrimaryModel(p.defaultModel);
+                if (p) {
+                  setPrimaryModel(p.defaultModel);
+                  // Reset models list to provider's default set
+                  setPrimaryModels(p.recommendedModels?.map((m) => m.id) ?? [p.defaultModel]);
+                }
                 setPrimaryTestResult(null);
               }}
               className="w-full px-3 py-2.5 rounded-lg bg-violet-bg/50 border border-violet-subtle text-sm text-cream focus:outline-none focus:border-beige/30 transition-all"
@@ -329,17 +342,43 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           {primary.recommendedModels && primary.recommendedModels.length > 1 && (
             <div className="mb-4">
               <label className="text-[10px] font-mono uppercase tracking-wider text-violet-muted mb-1.5 block">
-                Modelo
+                Modelos ({primary.id === "openrouter" ? `4 salvos = fallback automático contra rate limit` : "1 selecionado"})
               </label>
-              <select
-                value={primaryModel}
-                onChange={(e) => setPrimaryModel(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-violet-bg/50 border border-violet-subtle text-xs text-cream focus:outline-none focus:border-beige/30 transition-all"
-              >
-                {primary.recommendedModels.map((m) => (
-                  <option key={m.id} value={m.id} className="bg-violet-bg">{m.label}</option>
-                ))}
-              </select>
+              {primary.id === "openrouter" ? (
+                <div className="space-y-1.5 p-2.5 rounded-lg bg-neon-green/5 border border-neon-green/20">
+                  {primary.recommendedModels.map((m, idx) => (
+                    <label key={m.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-white/5 rounded px-2 py-1">
+                      <input
+                        type="checkbox"
+                        checked={primaryModels.includes(m.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setPrimaryModels([...primaryModels, m.id]);
+                          } else {
+                            setPrimaryModels(primaryModels.filter((x) => x !== m.id));
+                          }
+                        }}
+                        className="accent-neon-green"
+                      />
+                      <span className="text-cream font-mono text-[11px] flex-1">{m.label}</span>
+                      <span className="text-[9px] text-violet-muted">#{idx + 1}</span>
+                    </label>
+                  ))}
+                  <p className="text-[10px] text-neon-green mt-1.5 leading-relaxed">
+                    ✓ Marcados = salvos como fallback. Se o #1 der 429, vai pro #2 automaticamente.
+                  </p>
+                </div>
+              ) : (
+                <select
+                  value={primaryModel}
+                  onChange={(e) => setPrimaryModel(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-violet-bg/50 border border-violet-subtle text-xs text-cream focus:outline-none focus:border-beige/30 transition-all"
+                >
+                  {primary.recommendedModels.map((m) => (
+                    <option key={m.id} value={m.id} className="bg-violet-bg">{m.label}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
