@@ -39,6 +39,7 @@ export interface ProviderCatalogEntry {
   defaultModel: string;
   recommendedModels?: { id: string; label: string; isFree?: boolean }[];
   highlight?: boolean; // shown at top with badge
+  verified?: boolean; // P0: tested OK with real prompt in this session — user can trust the default
 }
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -52,15 +53,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     signupMinutes: 2,
     docsUrl: "https://openrouter.ai/settings/keys",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "qwen/qwen-2.5-72b-instruct:free",
+    defaultModel: "google/gemma-2-9b-it:free",
     recommendedModels: [
-      { id: "qwen/qwen-2.5-72b-instruct:free", label: "Qwen 2.5 72B (free) ⭐", isFree: true },
       { id: "google/gemma-2-9b-it:free", label: "Gemma 2 9B (free)", isFree: true },
+      { id: "mistralai/mistral-7b-instruct:free", label: "Mistral 7B (free)", isFree: true },
       { id: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free) — pode estar rate-limited", isFree: true },
       { id: "deepseek/deepseek-r1:free", label: "DeepSeek R1 (free)", isFree: true },
-      { id: "mistralai/mistral-7b-instruct:free", label: "Mistral 7B (free)", isFree: true },
     ],
-    highlight: true,
+    highlight: false,
   },
   {
     id: "gemini",
@@ -74,10 +74,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     defaultModel: "gemini-2.0-flash",
     recommendedModels: [
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (free)", isFree: true },
+      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (free) ⭐", isFree: true },
       { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite (free)", isFree: true },
     ],
     highlight: true,
+    verified: true,
   },
   {
     id: "groq",
@@ -91,10 +92,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     defaultBaseUrl: "https://api.groq.com/openai/v1",
     defaultModel: "llama-3.3-70b-versatile",
     recommendedModels: [
-      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile (free)", isFree: true },
+      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile (free) ⭐", isFree: true },
       { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant (free)", isFree: true },
       { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B (free)", isFree: true },
     ],
+    verified: true,
   },
   {
     id: "openai",
