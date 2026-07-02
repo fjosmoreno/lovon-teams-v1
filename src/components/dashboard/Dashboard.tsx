@@ -147,12 +147,13 @@ export function Dashboard({ onExit }: Props) {
   const hydrated = useLovonStore((s) => s.hydrated);
   const { user, logout } = useAuth();
 
-  // Auto-seed a default company on first dashboard load (so user immediately has a CEO)
+  // Auto-seed a default company + Company Core DNA on every dashboard load
+  // (idempotent — won't overwrite existing config)
   useEffect(() => {
-    if (hydrated && !company) {
+    if (hydrated) {
       ensureCompanyExists();
     }
-  }, [hydrated, company]);
+  }, [hydrated]);
 
   const pendingCount = tasksPendingUnassigned;
 
