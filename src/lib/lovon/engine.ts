@@ -813,15 +813,81 @@ async function delegateAndExecute(
             });
           }
         }
+      } else if (expectedWorkProducts) {
+        // P0: Expected work products were declared but none found in conclusion.
+        // Create a fallback work product from the raw conclusion so the user
+        // at least sees something in the Work Products folder.
+        try {
+          const fallbackWp = {
+            meta: {
+              id: `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+              workspaceId: "default",
+              version: "1.0",
+              status: "draft" as const,
+              createdAt: new Date().toISOString(),
+              createdBy: { kind: "agent" as const, agentSlug: worker.name.toLowerCase().replace(/\s+/g, "-") },
+              sourceTaskId: taskId,
+              tags: ["auto-fallback"],
+              type: "campaign_brief" as const,
+            },
+            name: `Conclusão: ${task.title}`,
+            objective: execResult.conclusion.slice(0, 500),
+            audience: "Stakeholders",
+            channels: ["Internal"],
+            kpis: ["Ver conclusão completa na task"],
+            timeline: "N/A",
+            budget: "N/A",
+            tone: "Padrão",
+          };
+          useLovonStore.getState().addWorkProduct(fallbackWp as any);
+          state.logActivity({
+            agentId: workerId,
+            agentName: worker.name,
+            action: "message",
+            message: `⚠ LLM não emitiu work products estruturados. Criei fallback com a conclusão como campaign_brief (edite depois em Work Products).`,
+            taskId,
+            accent: "orange",
+          });
+        } catch (err) {
+          console.error("[engine] failed to create fallback work product:", err);
+        }
       } else {
-        state.logActivity({
-          agentId: workerId,
-          agentName: worker.name,
-          action: "message",
-          message: `⚠ Nenhum bloco >>>WORK_PRODUCT encontrado na conclusão. A task será bloqueada com MISSING_WORK_PRODUCTS.`,
-          taskId,
-          accent: "orange",
-        });
+        // No expected work products and none found — that's fine, just a plain text conclusion.
+        // Save it as a generic work product so user sees it in the folder.
+        try {
+          const genericWp = {
+            meta: {
+              id: `wp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+              workspaceId: "default",
+              version: "1.0",
+              status: "draft" as const,
+              createdAt: new Date().toISOString(),
+              createdBy: { kind: "agent" as const, agentSlug: worker.name.toLowerCase().replace(/\s+/g, "-") },
+              sourceTaskId: taskId,
+              tags: ["conclusion"],
+              type: "campaign_brief" as const,
+            },
+            name: task.title,
+            objective: execResult.conclusion.slice(0, 500),
+            audience: "Equipe",
+            channels: ["Internal"],
+            kpis: ["Conclusão completa na task"],
+            timeline: "Concluído",
+            budget: "N/A",
+            tone: "Padrão",
+          };
+          useLovonStore.getState().addWorkProduct(genericWp as any);
+          state.logActivity({
+            agentId: workerId,
+            agentName: worker.name,
+            action: "message",
+            message: `📄 Conclusão salva como work product (genérico, edite depois).`,
+            taskId,
+            accent: "blue",
+          });
+        } catch (err) {
+          console.error("[engine] failed to create generic work product:", err);
+        }
       }
     }
 
