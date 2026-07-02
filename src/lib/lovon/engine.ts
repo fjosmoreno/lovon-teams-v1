@@ -558,14 +558,34 @@ async function delegateAndExecute(
   mission: string,
   companyName?: string
 ): Promise<void> {
+  try {
   const state = useLovonStore.getState();
   const dept = state.departments.find((d) => d.id === subtask.departmentId);
   if (!dept || !dept.headId) {
-    // Department wasn't created — skip
+    // Department wasn't created — skip. Log so user can see why worker didn't start.
+    useLovonStore.getState().logActivity({
+      agentId: ceo.id,
+      agentName: ceo.name,
+      action: "failed",
+      message: `⚠ Não foi possível executar subtask "${subtask.title}": departamento "${subtask.departmentId}" sem head.`,
+      taskId: topTaskId,
+      accent: "orange",
+    });
     return;
   }
 
   const head = state.agents.find((a) => a.id === dept.headId);
+  if (!head) {
+    useLovonStore.getState().logActivity({
+      agentId: ceo.id,
+      agentName: ceo.name,
+      action: "failed",
+      message: `⚠ Departamento "${dept.name}" tem headId ${dept.headId} mas o agente não foi encontrado.`,
+      taskId: topTaskId,
+      accent: "orange",
+    });
+    return;
+  }
   if (!head) return;
 
   // === Detect email requirement and route to Email Agent ===
@@ -1110,6 +1130,23 @@ async function delegateAndExecute(
         taskId,
         accent: "green",
       });
+    }
+  }
+  } catch (err) {
+    // CRITICAL: catch any uncaught error so we never silently leave a task pending
+    const msg = err instanceof Error ? err.message : "Erro desconhecido em delegateAndExecute";
+    console.error("[engine] delegateAndExecute crashed:", err);
+    try {
+      useLovonStore.getState().logActivity({
+        agentId: ceo.id,
+        agentName: ceo.name,
+        action: "failed",
+        message: `❌ delegateAndExecute crashou para "${subtask.title}": ${msg}`,
+        taskId: topTaskId,
+        accent: "orange",
+      });
+    } catch {
+      // ignore — store might be in a bad state too
     }
   }
 }
