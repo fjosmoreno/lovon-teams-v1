@@ -11,7 +11,6 @@ import {
   Bot,
   PlusCircle,
   Store,
-  Route,
   BarChart3,
   Settings,
   LogOut,
@@ -27,7 +26,6 @@ import {
   Wrench,
   Megaphone,
   Plug,
-  Cpu,
   Calendar,
 } from "lucide-react";
 import { useLovonStore } from "@/lib/lovon/store";
@@ -43,7 +41,6 @@ import { ActivityFeed } from "./views/ActivityFeed";
 import { AgentsList } from "./views/AgentsList";
 import { CreateAgent } from "./views/CreateAgent";
 import { MarketView } from "./views/MarketView";
-import { RoutingView } from "./views/RoutingView";
 import { AnalyticsView } from "./views/AnalyticsView";
 import { SettingsView } from "./views/SettingsView";
 import { OrgChartView } from "./views/OrgChartView";
@@ -55,7 +52,6 @@ import { WebResearch } from "./views/WebResearch";
 import { SkillsView } from "./views/SkillsView";
 import { WorkProductsView } from "./views/WorkProductsView";
 import { IntegrationsView } from "./views/IntegrationsView";
-import { SmartRoutingView } from "./views/SmartRoutingView";
 import { CEOAutonomyView } from "./views/CEOAutonomyView";
 import { MeetingView } from "./views/MeetingView";
 
@@ -73,7 +69,6 @@ type View =
   | "skills"
   | "work-products"
   | "integrations"
-  | "smart-routing"
   | "ceo-autonomy"
   | "meeting"
   | "tasks"
@@ -81,7 +76,6 @@ type View =
   | "agents"
   | "create"
   | "market"
-  | "routing"
   | "analytics"
   | "settings";
 
@@ -108,7 +102,6 @@ const NAV_GROUPS: { label: string; items: { id: View; label: string; icon: React
       { id: "agents", label: "Agentes", icon: Bot },
       { id: "create", label: "Criar Agente", icon: PlusCircle },
       { id: "market", label: "Marketplace", icon: Store },
-      { id: "routing", label: "Roteamento Inteligente", icon: Route },
       { id: "email", label: "Email Agent", icon: Mail },
       { id: "research", label: "Web Research", icon: Globe },
     ],
@@ -121,7 +114,6 @@ const NAV_GROUPS: { label: string; items: { id: View; label: string; icon: React
       { id: "skills", label: "Skills & Tools", icon: Wrench },
       { id: "work-products", label: "Work Products", icon: Megaphone },
       { id: "integrations", label: "Integrações", icon: Plug },
-      { id: "smart-routing", label: "Smart Routing", icon: Cpu },
       { id: "ceo-autonomy", label: "CEO Autonomy", icon: Crown },
     ],
   },
@@ -185,8 +177,6 @@ export function Dashboard({ onExit }: Props) {
         return <CreateAgent onDone={() => setView("agents")} />;
       case "market":
         return <MarketView />;
-      case "routing":
-        return <RoutingView />;
       case "email":
         return <EmailAgent />;
       case "research":
@@ -205,8 +195,6 @@ export function Dashboard({ onExit }: Props) {
         return <WorkProductsView />;
       case "integrations":
         return <IntegrationsView initialFilterCapability={integrationFilterCapability as any} />;
-      case "smart-routing":
-        return <SmartRoutingView />;
       case "ceo-autonomy":
         return <CEOAutonomyView />;
       case "settings":

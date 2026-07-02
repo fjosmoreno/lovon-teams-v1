@@ -11,7 +11,7 @@ import { executeLLMWithInfra } from "@/lib/lovon/llm-infrastructure";
 import { detectEmailRequirement } from "@/lib/lovon/taskRouter";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 interface AgentRequest {
   agentName: string;

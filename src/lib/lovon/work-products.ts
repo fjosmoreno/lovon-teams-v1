@@ -264,7 +264,7 @@ export type CapabilityId =
 
 export type ProviderId =
   | "brave" | "resend" | "gemini" | "buffer" | "hubspot" | "umami" | "internal"
-  | "openai" | "anthropic" | "groq" | "openrouter" | "deepseek"
+  | "openai" | "anthropic" | "groq" | "openrouter" | "deepseek" | "nvidia"
   | "github" | "vercel" | "netlify" | "cloudflare" | "gitlab"
   | "custom_openapi"      // user-pasted OpenAPI spec
   | "custom_http";        // manual endpoint templates

@@ -13,6 +13,62 @@ import { detectEmailRequirement, ensureEmailAgent, routeTask } from "./taskRoute
 const uid = (prefix = "id") =>
   `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-3)}`;
 
+// P0: Watchdog to prevent infinite execution loops. If a task stays in
+// "in_progress" for more than MAX_EXECUTION_TIME_MS, mark it as failed.
+const MAX_EXECUTION_TIME_MS = 3 * 60 * 1000; // 3 minutes
+const executionWatchdogs = new Map<string, NodeJS.Timeout>();
+
+function startExecutionWatchdog(taskId: string) {
+  // Clear any existing watchdog for this task
+  stopExecutionWatchdog(taskId);
+  const timer = setTimeout(() => {
+    const state = useLovonStore.getState();
+    const task = state.tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    if (task.status !== "in_progress" && task.status !== "working" && task.status !== "pending") return;
+    console.warn(`[engine] Watchdog: task "${task.title}" stuck for >3min. Forcing failure.`);
+    state.setTaskBlockers(taskId, [
+      {
+        code: "LLM_FAILED",
+        message: `Task travou em execução por mais de 3 minutos sem produzir conclusão. Provavelmente LLM muito lento ou hangup.`,
+        requiredAction: `Verifique se o provider LLM está respondendo (Integrações → Testar). Considere trocar de modelo. Re-execute a task.`,
+        relatedEntity: { type: "task", id: taskId },
+        createdAt: new Date().toISOString(),
+        createdBy: "watchdog",
+        traceId: `watchdog:${taskId}`,
+      },
+    ]);
+    useLovonStore.setState((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, status: "blocked" as const, result: `${t.result ?? ""}\n\n⚠ Watchdog: execução excedeu 3 minutos e foi abortada.`, updatedAt: Date.now() }
+          : t
+      ),
+      agents: s.agents.map((a) =>
+        a.currentTaskId === taskId ? { ...a, status: "active" as const, currentTaskId: null } : a
+      ),
+    }));
+    state.logActivity({
+      agentId: "system",
+      agentName: "Sistema",
+      action: "failed",
+      message: `🛑 Watchdog: task "${task.title}" travou por >3min. Marcada como bloqueada.`,
+      taskId,
+      accent: "orange",
+    });
+    executionWatchdogs.delete(taskId);
+  }, MAX_EXECUTION_TIME_MS);
+  executionWatchdogs.set(taskId, timer);
+}
+
+function stopExecutionWatchdog(taskId: string) {
+  const timer = executionWatchdogs.get(taskId);
+  if (timer) {
+    clearTimeout(timer);
+    executionWatchdogs.delete(taskId);
+  }
+}
+
 interface PlannedSubtask {
   departmentId: string;
   title: string;
@@ -214,7 +270,7 @@ function resolveProviderConfigForEngine(): Array<{
   if (typeof window === "undefined") return [];
   try {
     const state = useLovonStore.getState();
-    const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"];
+    const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia"];
     const defaults: Record<string, string> = {
       openai: "https://api.openai.com/v1",
       anthropic: "https://api.anthropic.com/v1",
@@ -222,6 +278,7 @@ function resolveProviderConfigForEngine(): Array<{
       openrouter: "https://openrouter.ai/api/v1",
       deepseek: "https://api.deepseek.com/v1",
       gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+      nvidia: "https://integrate.api.nvidia.com/v1",
     };
     const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string; integrationId?: string }> = [];
     // 1) Client-side integrations (per-user, configurable in Lovon UI)
@@ -795,6 +852,7 @@ async function delegateAndExecute(
 
   // 3. Agent acknowledges and starts
   state.startTask(taskId);
+  startExecutionWatchdog(taskId); // P0: kill task if stuck >3min
   const delegateAgent = useLovonStore.getState().agents.find((a) => a.id === delegateToId)!;
   state.logActivity({
     agentId: delegateToId,
@@ -983,6 +1041,7 @@ async function delegateAndExecute(
     }
 
     // 6. Worker completes with REAL conclusion (hard gate will check WPs)
+    stopExecutionWatchdog(taskId); // P0: task completed, stop watchdog
     useLovonStore.getState().completeTask(taskId, execResult.conclusion);
     const kbNote = execResult.retrievedDocs && execResult.retrievedDocs.length > 0
       ? ` · ${execResult.retrievedDocs.length} doc(s) KB recuperado(s)`
@@ -1284,6 +1343,7 @@ async function delegateAndExecute(
 
     // Mark as blocked (not failed) so the blocker is visible in the "Why blocked?" UI
     useLovonStore.getState().setTaskBlockers(taskId, [llmBlocker]);
+    stopExecutionWatchdog(taskId); // P0: failure path, stop watchdog
     useLovonStore.setState((s) => ({
       tasks: s.tasks.map((t) =>
         t.id === taskId
