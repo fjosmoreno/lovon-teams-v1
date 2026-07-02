@@ -92,6 +92,9 @@ export interface Task {
   // The UI shows a "Ver motivo" button + resolution options (retry, reassign, escalate to CEO, etc.)
   partialReason?: PartialReason;
   resolutionAttempts?: ResolutionAttempt[];
+  // P0: how many times CEO auto-resolved blockers on this task. Caps at MAX_AUTO_RESOLVES
+  // to prevent infinite loops when underlying issue (e.g., bad LLM provider) doesn't get fixed.
+  autoResolveCount?: number;
 }
 
 export interface PartialReason {
@@ -3071,6 +3074,32 @@ export const useLovonStore = create<LovonState>()(
           }
         }
 
+        // P0: Limit auto-resolve retries to MAX_AUTO_RESOLVES per task to prevent infinite loops
+        // (e.g., LLM keeps failing → CEO keeps resetting → never converges)
+        const MAX_AUTO_RESOLVES = 1;
+        const currentAutoResolves = task.autoResolveCount ?? 0;
+        if (currentAutoResolves >= MAX_AUTO_RESOLVES) {
+          // Stop auto-resolving. User must intervene manually (re-executar button, or fix provider).
+          unresolved.push({
+            blockerCode: "AUTO_RESOLVE_LIMIT",
+            reason: `CEO já tentou resetar esta task ${currentAutoResolves}x automaticamente. Para evitar loop infinito, parou. Use o botão 'Re-executar' manualmente ou corrija o provider.`,
+          });
+          state.logActivity({
+            agentId: ceo?.id ?? "",
+            agentName: ceo?.name ?? "CEO",
+            action: "failed",
+            message: `🛑 Limite de auto-resolve atingido (${currentAutoResolves}/${MAX_AUTO_RESOLVES}). Use 'Re-executar' ou corrija o provider.`,
+            taskId,
+            accent: "orange",
+          });
+          return {
+            ok: false,
+            resolved,
+            unresolved,
+            taskResetToPending: false,
+          };
+        }
+
         // If all blockers were resolved (or are retryable), reset the task to pending
         let taskResetToPending = false;
         if (canRetry && unresolved.length === 0) {
@@ -3082,6 +3111,7 @@ export const useLovonStore = create<LovonState>()(
                     status: "pending" as const,
                     blockers: [],
                     partialReason: undefined,
+                    autoResolveCount: currentAutoResolves + 1, // P0: track retry count
                     updatedAt: Date.now(),
                   }
                 : t
@@ -3092,7 +3122,7 @@ export const useLovonStore = create<LovonState>()(
             agentId: ceo?.id ?? "",
             agentName: ceo?.name ?? "CEO",
             action: "completed",
-            message: `✅ CEO desbloqueou a task "${task.title}" — todos os ${resolved.length} blocker(s) resolvidos. Task resetada para pending.`,
+            message: `✅ CEO desbloqueou a task "${task.title}" — todos os ${resolved.length} blocker(s) resolvidos. Task resetada para pending. (auto-resolve ${currentAutoResolves + 1}/${MAX_AUTO_RESOLVES})`,
             taskId,
             accent: "green",
           });
