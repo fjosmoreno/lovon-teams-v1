@@ -142,6 +142,23 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     defaultBaseUrl: "https://api.deepseek.com/v1",
     defaultModel: "deepseek-chat",
   },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    emoji: "⚡",
+    tagline: "Mesma plataforma que roda o Mavis. M-series, 1M contexto, multimodal.",
+    isFree: false,
+    signupMinutes: 1,
+    docsUrl: "https://platform.minimax.io/user-center/apikeys",
+    defaultBaseUrl: "https://api.minimax.io/v1",
+    defaultModel: "MiniMax-M3",
+    recommendedModels: [
+      { id: "MiniMax-M3", label: "MiniMax-M3 (frontier, 1M contexto, multimodal) ⭐" },
+      { id: "MiniMax-M2.7-highspeed", label: "MiniMax-M2.7 Highspeed (rápido, 100 tps)" },
+      { id: "MiniMax-M2.7", label: "MiniMax-M2.7 (balanceado, 60 tps)" },
+      { id: "MiniMax-M2", label: "MiniMax-M2 (agentic + tool use)" },
+    ],
+  },
 ];
 
 interface Props {
@@ -862,6 +879,14 @@ function getTutorialSteps(p: ProviderCatalogEntry): { title: string; desc: strin
       { title: "Vá em API Keys", desc: "Clique 'Create new key'." },
       { title: "Copie a key (sk-...)", desc: "⚠️ Aparece só uma vez. Copie imediatamente." },
       { title: "Cole aqui", desc: "Volte, cole e teste. DeepSeek cobra por uso (barato)." },
+    ];
+  }
+  if (p.id === "minimax") {
+    return [
+      { title: "Acesse platform.minimax.io", desc: "Login com a conta que tem o plano contratado." },
+      { title: "Vá em User Center → API Keys", desc: "https://platform.minimax.io/user-center/apikeys" },
+      { title: "Clique 'Create new key'", desc: "Dê um nome (ex: 'Lovon Teams') e copie. ⚠️ Aparece só uma vez." },
+      { title: "Cole aqui", desc: "Volte, cole no campo e clique 'Testar'. Os créditos do seu plano são consumidos automaticamente." },
     ];
   }
   return [

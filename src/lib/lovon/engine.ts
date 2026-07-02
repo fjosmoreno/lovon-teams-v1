@@ -382,7 +382,7 @@ function resolveProviderConfigForEngine(): Array<{
   if (typeof window === "undefined") return [];
   try {
     const state = useLovonStore.getState();
-    const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia"];
+    const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "minimax"];
     const defaults: Record<string, string> = {
       openai: "https://api.openai.com/v1",
       anthropic: "https://api.anthropic.com/v1",
@@ -391,6 +391,7 @@ function resolveProviderConfigForEngine(): Array<{
       deepseek: "https://api.deepseek.com/v1",
       gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
       nvidia: "https://integrate.api.nvidia.com/v1",
+      minimax: "https://api.minimax.io/v1",
     };
     const out: Array<{ baseUrl: string; apiKey: string; model?: string; provider: string; integrationId?: string }> = [];
     // 1) Client-side integrations (per-user, configurable in Lovon UI)

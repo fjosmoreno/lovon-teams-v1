@@ -2908,7 +2908,7 @@ export const useLovonStore = create<LovonState>()(
                 // Check if user has any LLM provider configured
                 const hasLLMProvider = state.integrations.some((i) =>
                   i.status === "active" &&
-                  ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia"].includes(i.providerKey) &&
+                  ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "minimax"].includes(i.providerKey) &&
                   typeof window !== "undefined" &&
                   window.localStorage.getItem(`vault:integration:${i.id}`)
                 );

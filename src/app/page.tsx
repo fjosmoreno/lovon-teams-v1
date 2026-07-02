@@ -42,7 +42,7 @@ export default function Home() {
     setTimeout(() => {
       const integrations = useLovonStore.getState().integrations;
       const hasAIIntegration = integrations.some((i) =>
-        ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia"].includes(i.providerKey)
+        ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "minimax"].includes(i.providerKey)
       );
       if (hasAIIntegration) {
         setView("dashboard");

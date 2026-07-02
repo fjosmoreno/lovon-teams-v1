@@ -31,6 +31,7 @@ import {
 import { useLovonStore } from "@/lib/lovon/store";
 import { useAuth } from "@/lib/lovon/AuthContext";
 import { ensureCompanyExists } from "@/lib/lovon/engine";
+import { VersionBanner } from "@/components/VersionBanner";
 import { Onboarding } from "./Onboarding";
 import { CommandCenter } from "./views/CommandCenter";
 import { DashboardOverview } from "./views/Overview";
@@ -450,6 +451,9 @@ export function Dashboard({ onExit }: Props) {
             </div>
           </div>
         </header>
+
+        {/* P0: Version Banner — detecta novo deploy e força reload */}
+        <VersionBanner />
 
         {/* P0: LLM Error Banner — mostra o último erro do provider pra o user entender o que tá quebrando */}
         {lastLLMError && (

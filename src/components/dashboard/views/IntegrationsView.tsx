@@ -74,6 +74,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderId, React.ComponentType<{ className
   openrouter: Zap,
   deepseek: Zap,
   nvidia: Zap,
+  minimax: Zap,
   github: Github,
   gitlab: Github,
   vercel: Rocket,
@@ -174,7 +175,7 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
             title="🧠 Provedores de IA"
             subtitle="Onde seus agentes pensam. Roteamento automático, sem binding."
             integrations={filteredIntegrations.filter((i) =>
-              ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia"].includes(i.providerKey)
+              ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "minimax"].includes(i.providerKey)
             )}
             testingId={testingId}
             onTest={async (id) => {
@@ -194,7 +195,7 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
             title="🔌 Integrações externas"
             subtitle="Resend (email), GitHub (repo), Vercel (deploy), etc. Use para dar superpoderes aos agentes."
             integrations={filteredIntegrations.filter((i) =>
-              !["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "internal"].includes(i.providerKey)
+              !["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "nvidia", "minimax", "internal"].includes(i.providerKey)
             )}
             testingId={testingId}
             onTest={async (id) => {
