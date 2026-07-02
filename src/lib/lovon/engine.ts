@@ -51,11 +51,15 @@ async function callAgentAPI(payload: {
   knowledgeBase?: import("./store").KBDocument[];
   expectedWorkProducts?: import("./store").ExpectedWorkProducts;
 }): Promise<{ success: boolean; conclusion?: string; plan?: CEOPlan; error?: string; raw?: string; retrievedDocs?: { id: string; title: string; category: string }[] }> {
+  // Resolve per-user provider config from store (credentials live in localStorage vault).
+  // Priority: integrations with providerKey in AI list > first enabled integration.
+  const providerConfig = resolveProviderConfigForEngine();
+
   try {
     const res = await fetch("/api/lovon/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, providerConfig }),
     });
     if (!res.ok) {
       return { success: false, error: `HTTP ${res.status}` };
@@ -68,6 +72,49 @@ async function callAgentAPI(payload: {
   } catch (err) {
     const message = err instanceof Error ? err.message : "fetch failed";
     return { success: false, error: message };
+  }
+}
+
+// Read per-user LLM provider config from the Zustand store.
+// Looks up the first enabled AI integration, reads its credential from localStorage vault,
+// returns { baseUrl, apiKey, model, provider } or null if none configured.
+function resolveProviderConfigForEngine(): {
+  baseUrl: string;
+  apiKey: string;
+  model?: string;
+  provider?: string;
+} | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const state = useLovonStore.getState();
+    const aiProviders = ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"];
+    const integration = state.integrations.find(
+      (i) => i.status === "active" && aiProviders.includes(i.providerKey)
+    );
+    if (!integration) return null;
+
+    const apiKey = window.localStorage.getItem(`vault:integration:${integration.id}`) ?? "";
+    if (!apiKey) return null;
+
+    const cfg = integration.config ?? {};
+    const baseUrl =
+      (cfg.baseUrl as string | undefined) ??
+      // sensible defaults per provider
+      ({
+        openai: "https://api.openai.com/v1",
+        anthropic: "https://api.anthropic.com/v1",
+        groq: "https://api.groq.com/openai/v1",
+        openrouter: "https://openrouter.ai/api/v1",
+        deepseek: "https://api.deepseek.com/v1",
+        gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+      } as Record<string, string>)[integration.providerKey];
+
+    const model = (cfg.models as string[] | undefined)?.[0];
+
+    return { baseUrl, apiKey, model, provider: integration.providerKey };
+  } catch (err) {
+    console.warn("[engine] resolveProviderConfigForEngine failed:", err);
+    return null;
   }
 }
 

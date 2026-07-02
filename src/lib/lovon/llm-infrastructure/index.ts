@@ -1,8 +1,38 @@
 // Lovon Teams — LLM Infrastructure
 // Retry + backoff, concurrency queue, circuit breaker, fallback, structured logging.
 // Resolve 502/503/504/429 sem perder 80% das execuções.
+//
+// Provider resolution priority (per call):
+//   1. `providerConfig` passed by the caller (per-user integration from Zustand store)
+//   2. OpenAI-compatible env vars (LOVON_LLM_BASE_URL + LOVON_LLM_API_KEY + LOVON_LLM_MODEL)
+//   3. z-ai-web-dev-sdk (ZAI.create()) — local dev only
 
 import ZAI from "z-ai-web-dev-sdk";
+
+interface LLMProviderConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+function resolveProviderConfig(override?: { baseUrl?: string; apiKey?: string; model?: string } | null): LLMProviderConfig | null {
+  // 1) Caller override (per-user integration)
+  if (override?.baseUrl && override?.apiKey) {
+    return {
+      baseUrl: override.baseUrl.replace(/\/+$/, ""),
+      apiKey: override.apiKey,
+      model: override.model ?? "gpt-4o-mini",
+    };
+  }
+  // 2) Env vars (serverless-friendly: Render, Vercel, Fly, etc.)
+  const baseUrl = process.env.LOVON_LLM_BASE_URL;
+  const apiKey = process.env.LOVON_LLM_API_KEY;
+  const model = process.env.LOVON_LLM_MODEL ?? "gpt-4o-mini";
+  if (baseUrl && apiKey) {
+    return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey, model };
+  }
+  return null;
+}
 
 // === Types ===
 
@@ -184,8 +214,50 @@ const FALLBACK_CHAIN: { provider: string; model: string }[] = [
 
 async function executeSingleLLMCall(
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  providerOverride?: { baseUrl?: string; apiKey?: string; model?: string } | null
 ): Promise<{ content: string; tokensIn: number; tokensOut: number }> {
+  const cfg = resolveProviderConfig(providerOverride);
+
+  // Path A: OpenAI-compatible via env vars OR caller override (preferred for serverless deploys)
+  if (cfg) {
+    const url = `${cfg.baseUrl}/chat/completions`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.4,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 300)}`);
+    }
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content ?? "";
+    if (!content.trim()) {
+      throw new Error("LLM returned empty response");
+    }
+    return {
+      content,
+      tokensIn: systemPrompt.length + userPrompt.length,
+      tokensOut: content.length,
+    };
+  }
+
+  // Path B: Fallback to z-ai-web-dev-sdk (local dev with .z-ai-config)
   const zai = await ZAI.create();
   const completion = await zai.chat.completions.create({
     messages: [
@@ -215,10 +287,13 @@ async function executeSingleLLMCall(
  * - Structured logging
  * - Fallback chain
  */
-export async function executeLLMWithInfra(params: LLMCallParams): Promise<LLMCallResult> {
+export async function executeLLMWithInfra(
+  params: LLMCallParams,
+  providerOverride?: { baseUrl?: string; apiKey?: string; model?: string } | null
+): Promise<LLMCallResult> {
   const startTime = Date.now();
-  const provider = params.provider ?? "z-ai";
-  const model = params.model ?? "default";
+  const provider = params.provider ?? "openai-compatible";
+  const model = params.model ?? providerOverride?.model ?? "default";
   const cbKey = getCircuitBreakerKey(provider, model);
   const requestSizeBytes = params.systemPrompt.length + params.userPrompt.length;
 
@@ -245,7 +320,7 @@ export async function executeLLMWithInfra(params: LLMCallParams): Promise<LLMCal
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        const callResult = await executeSingleLLMCall(params.systemPrompt, params.userPrompt);
+        const callResult = await executeSingleLLMCall(params.systemPrompt, params.userPrompt, providerOverride);
         const latencyMs = Date.now() - startTime;
 
         // Success — record circuit success

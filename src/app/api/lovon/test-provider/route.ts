@@ -1,0 +1,83 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// POST /api/lovon/test-provider
+// Tests an AI provider by making a tiny real HTTP call with the user's API key.
+// Body: { baseUrl: string, apiKey: string, model: string, provider: string }
+// Returns: { ok: boolean, message: string, latencyMs?: number, sampleResponse?: string }
+//
+// Strategy: send a tiny "echo" chat completion with max_tokens=5. If the provider
+// returns any successful response, the key is valid. If 401/403, key is bad.
+
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body.baseUrl !== "string" || typeof body.apiKey !== "string") {
+    return NextResponse.json(
+      { ok: false, message: "Body inválido. Esperado: { baseUrl, apiKey, model?, provider? }" },
+      { status: 400 }
+    );
+  }
+
+  const baseUrl = body.baseUrl.replace(/\/+$/, "");
+  const apiKey = body.apiKey.trim();
+  const model = (body.model ?? "gpt-4o-mini").trim();
+  const provider = body.provider ?? "unknown";
+
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, message: "API key vazia." }, { status: 400 });
+  }
+
+  const start = Date.now();
+  try {
+    const url = `${baseUrl}/chat/completions`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 5,
+        temperature: 0,
+      }),
+    });
+
+    const latencyMs = Date.now() - start;
+
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const sample = data?.choices?.[0]?.message?.content?.toString().slice(0, 80) ?? "";
+      return NextResponse.json({
+        ok: true,
+        message: `Conexão OK · ${latencyMs}ms · provider respondeu`,
+        latencyMs,
+        sampleResponse: sample,
+        provider,
+        model,
+      });
+    }
+
+    // Map status codes to human messages
+    const errText = await res.text().catch(() => "");
+    let message: string;
+    if (res.status === 401) message = "API key inválida ou expirada (401).";
+    else if (res.status === 403) message = "API key sem permissão para este modelo (403).";
+    else if (res.status === 404) message = `Endpoint ou modelo "${model}" não encontrado (404). Verifique a baseUrl e o nome do modelo.`;
+    else if (res.status === 429) message = "Rate limit atingido (429). Tente novamente em alguns segundos.";
+    else if (res.status >= 500) message = `Provider fora do ar (${res.status}). Tente outro provider.`;
+    else message = `Erro ${res.status}: ${errText.slice(0, 200)}`;
+
+    return NextResponse.json({ ok: false, message, latencyMs, provider, model }, { status: 200 });
+  } catch (err) {
+    const latencyMs = Date.now() - start;
+    const errMsg = err instanceof Error ? err.message : "Erro desconhecido";
+    return NextResponse.json({
+      ok: false,
+      message: `Falha de conexão: ${errMsg}. Verifique a baseUrl.`,
+      latencyMs,
+      provider,
+      model,
+    });
+  }
+}

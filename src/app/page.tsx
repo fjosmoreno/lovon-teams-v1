@@ -10,10 +10,12 @@ import { CTA } from "@/components/landing/CTA";
 import { Footer } from "@/components/landing/Footer";
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { AuthScreen } from "@/components/auth/AuthScreen";
+import { ProviderSetup } from "@/components/auth/ProviderSetup";
 import { useAuth } from "@/lib/lovon/AuthContext";
+import { useLovonStore } from "@/lib/lovon/store";
 import { Loader2 } from "lucide-react";
 
-type View = "landing" | "auth" | "dashboard";
+type View = "landing" | "auth" | "providers" | "dashboard";
 
 export default function Home() {
   const [view, setView] = useState<View>("landing");
@@ -33,6 +35,23 @@ export default function Home() {
     }
   };
 
+  // After signup, route user through ProviderSetup first if they don't have any AI integrations yet
+  const handleAuthSuccess = () => {
+    refresh();
+    // Defer state read until next tick to allow store hydration
+    setTimeout(() => {
+      const integrations = useLovonStore.getState().integrations;
+      const hasAIIntegration = integrations.some((i) =>
+        ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"].includes(i.providerKey)
+      );
+      if (hasAIIntegration) {
+        setView("dashboard");
+      } else {
+        setView("providers");
+      }
+    }, 100);
+  };
+
   if (loading && view === "dashboard") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-violet-bg">
@@ -44,11 +63,17 @@ export default function Home() {
   if (view === "auth") {
     return (
       <AuthScreen
-        onSuccess={() => {
-          refresh();
-          setView("dashboard");
-        }}
+        onSuccess={handleAuthSuccess}
         onBack={() => setView("landing")}
+      />
+    );
+  }
+
+  if (view === "providers") {
+    return (
+      <ProviderSetup
+        onComplete={() => setView("dashboard")}
+        onSkip={() => setView("dashboard")}
       />
     );
   }

@@ -36,6 +36,9 @@ interface AgentRequest {
   hasComment?: boolean;
   // P0 — Expected work products (hard gate)
   expectedWorkProducts?: import("@/lib/lovon/store").ExpectedWorkProducts;
+
+  // Per-user LLM provider override (from Zustand store integrations)
+  providerConfig?: { baseUrl?: string; apiKey?: string; model?: string; provider?: string };
 }
 
 const SYSTEM_PROMPT_CEO_PLAN_BASE = `Você é o CEO de uma empresa operando na plataforma Lovon Teams. Sua função é analisar uma missão estratégica e planejar a execução.
@@ -126,6 +129,7 @@ export async function POST(req: NextRequest) {
       hasSubtasks = false,
       hasComment = false,
       expectedWorkProducts,
+      providerConfig, // NEW: { baseUrl, apiKey, model? } — per-user LLM provider
     } = body;
 
     if (!agentName || !taskTitle) {
@@ -189,13 +193,16 @@ Analise esta missão e planeje a execução. Retorne o JSON conforme especificad
 
       // === LLM call with retry + backoff + circuit breaker + queue ===
       const correlationId = `ceo-plan-${Date.now()}`;
-      const llmResult = await executeLLMWithInfra({
-        systemPrompt,
-        userPrompt,
-        correlationId,
-        provider: "z-ai",
-        model: "default",
-      });
+      const llmResult = await executeLLMWithInfra(
+        {
+          systemPrompt,
+          userPrompt,
+          correlationId,
+          provider: (providerConfig?.provider as string) ?? "openai-compatible",
+          model: providerConfig?.model ?? model ?? "default",
+        },
+        providerConfig
+      );
 
       if (!llmResult.success) {
         return NextResponse.json({
@@ -376,13 +383,16 @@ Regras CRÍTICAS:
 
     // === LLM call with retry + backoff + circuit breaker + queue ===
     const correlationId = `worker-${agentName.replace(/\s/g, "-")}-${Date.now()}`;
-    const llmResult = await executeLLMWithInfra({
-      systemPrompt,
-      userPrompt: finalUserPrompt,
-      correlationId,
-      provider: "z-ai",
-      model: model || "default",
-    });
+    const llmResult = await executeLLMWithInfra(
+      {
+        systemPrompt,
+        userPrompt: finalUserPrompt,
+        correlationId,
+        provider: (providerConfig?.provider as string) ?? "openai-compatible",
+        model: providerConfig?.model ?? model ?? "default",
+      },
+      providerConfig
+    );
 
     if (!llmResult.success) {
       return NextResponse.json({
