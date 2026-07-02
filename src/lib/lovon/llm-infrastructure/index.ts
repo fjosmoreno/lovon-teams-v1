@@ -174,7 +174,33 @@ async function executeSingleLLMCall(
   systemPrompt: string,
   userPrompt: string,
   providerOverride?: { baseUrl?: string; apiKey?: string; model?: string } | null
-): Promise<{ content: string; tokensIn: number; tokensOut: number }> {
+): Promise<{ content: string; tokensIn: number; tokensOut: number; compressionSaved?: number }> {
+  // P0: Lovon Prompt Compression — comprime system+user prompts antes de enviar
+  // ao LLM. Reduz tokens consumidos (15-25% típico) sem precisar de Headroom proxy.
+  // Opt-out via env var LOVON_PROMPT_COMPRESSION_ENABLED=0 (default: on).
+  let compressedSystem = systemPrompt;
+  let compressedUser = userPrompt;
+  let compressionSaved = 0;
+  const compressionEnabled = process.env.LOVON_PROMPT_COMPRESSION_ENABLED !== "0";
+  if (compressionEnabled) {
+    try {
+      const { compressPromptPair } = await import("../prompt-compression");
+      const result = compressPromptPair(systemPrompt, userPrompt);
+      compressedSystem = result.system.compressed;
+      compressedUser = result.user.compressed;
+      compressionSaved = result.totalSavedTokens;
+      if (compressionSaved > 0) {
+        console.log(
+          `[compress] saved ${result.totalSavedTokens} tokens (~${result.totalSavedPercent}%): ` +
+          `sys ${result.system.savedTokensEstimated} + user ${result.user.savedTokensEstimated}`
+        );
+      }
+    } catch (err) {
+      // If compression fails for any reason, fall back to original prompts
+      console.warn("[compress] failed, using original prompts:", err);
+    }
+  }
+
   const cfg = resolveProviderConfig(providerOverride);
 
   // Path A: OpenAI-compatible via env vars OR caller override (preferred for serverless deploys)
@@ -197,8 +223,8 @@ async function executeSingleLLMCall(
       body: JSON.stringify({
         model: cfg.model,
         messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "system", content: compressedSystem },
+          { role: "user", content: compressedUser },
         ],
         temperature: 0.4,
         max_tokens: 4096,
@@ -226,8 +252,9 @@ async function executeSingleLLMCall(
     }
     return {
       content,
-      tokensIn: systemPrompt.length + userPrompt.length,
+      tokensIn: compressedSystem.length + compressedUser.length,
       tokensOut: content.length,
+      compressionSaved,
     };
   }
 
@@ -235,8 +262,8 @@ async function executeSingleLLMCall(
   const zai = await ZAI.create();
   const completion = await zai.chat.completions.create({
     messages: [
-      { role: "assistant", content: systemPrompt },
-      { role: "user", content: userPrompt },
+      { role: "assistant", content: compressedSystem },
+      { role: "user", content: compressedUser },
     ],
     thinking: { type: "disabled" },
   });
@@ -248,8 +275,9 @@ async function executeSingleLLMCall(
 
   return {
     content,
-    tokensIn: systemPrompt.length + userPrompt.length,
+    tokensIn: compressedSystem.length + compressedUser.length,
     tokensOut: content.length,
+    compressionSaved,
   };
 }
 
