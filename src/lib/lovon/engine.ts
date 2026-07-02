@@ -776,7 +776,10 @@ async function delegateAndExecute(
     // The agent emits >>>WORK_PRODUCT: type ... <<<END_WORK_PRODUCT blocks.
     // We parse them, validate with Zod, and persist via addWorkProduct().
     // This happens BEFORE completeTask() so the hard gate can see them.
-    if (expectedWorkProducts) {
+    // P0: ALWAYS try to extract work products, not just when expectedWorkProducts is set.
+    // Many tasks have implicit deliverables (lists, analyses, etc.) that the LLM mentions
+    // in the conclusion. We should capture those as work products.
+    {
       const workProducts = parseWorkProductsFromConclusion(execResult.conclusion, taskId, worker.name);
       if (workProducts.length > 0) {
         state.logActivity({
@@ -1266,6 +1269,31 @@ export async function reExecuteTask(taskId: string): Promise<{ ok: boolean; erro
 
   try {
     await delegateAndExecute(subtask, ceo, topTaskId, mission, companyName);
+    // P0: re-check parent task after re-execution. If all subtasks are now done,
+    // mark the parent as completed too. This was missing — re-execute left the
+    // parent stuck in "in_progress" forever.
+    const finalState = useLovonStore.getState();
+    const allSubtasks = finalState.tasks.filter((t) => t.parentTaskId === topTaskId);
+    const allCompleted = allSubtasks.length > 0 && allSubtasks.every(
+      (t) => t.status === "completed" || t.status === "failed"
+    );
+    if (allCompleted) {
+      const parent = finalState.tasks.find((t) => t.id === topTaskId);
+      if (parent && parent.status !== "completed") {
+        const completedCount = allSubtasks.filter((t) => t.status === "completed").length;
+        const failedCount = allSubtasks.filter((t) => t.status === "failed").length;
+        const summary = `# Missão Concluída (re-execução)\n\nSubtasks: ${completedCount} concluídas, ${failedCount} falharam.`;
+        useLovonStore.getState().completeTask(topTaskId, summary);
+        useLovonStore.getState().logActivity({
+          agentId: ceo.id,
+          agentName: ceo.name,
+          action: "completed",
+          message: `✅ Após re-execução: parent task finalizada (${completedCount} OK, ${failedCount} falhas).`,
+          taskId: topTaskId,
+          accent: "green",
+        });
+      }
+    }
     return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro desconhecido na re-execução.";
