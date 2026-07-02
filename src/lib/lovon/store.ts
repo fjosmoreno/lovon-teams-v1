@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DEPARTMENT_TEMPLATES, DepartmentTemplate } from "./data";
+import { CAPABILITY_CATALOG } from "./work-products";
 
 export type AgentRole = "ceo" | "department-head" | "worker";
 export type AgentStatus = "active" | "thinking" | "working" | "idle";
@@ -2892,6 +2893,41 @@ export const useLovonStore = create<LovonState>()(
                 break;
               }
 
+              // Step 0: If capability is NOT in the standard catalog (e.g. "copywriting",
+              // "agent_creation" — agent-internal LLM tasks), it's auto-routed to the user's
+              // LLM provider. No binding needed. Just mark as resolved.
+              const isInStandardCatalog = CAPABILITY_CATALOG.some((c) => c.id === capability);
+              if (!isInStandardCatalog) {
+                // Check if user has any LLM provider configured
+                const hasLLMProvider = state.integrations.some((i) =>
+                  i.status === "active" &&
+                  ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"].includes(i.providerKey) &&
+                  typeof window !== "undefined" &&
+                  window.localStorage.getItem(`vault:integration:${i.id}`)
+                );
+                resolved.push({
+                  blockerCode: blocker.code,
+                  action: "auto_route_llm",
+                  message: hasLLMProvider
+                    ? `Capability "${capability}" é roteada automaticamente para o provider LLM configurado. Sem necessidade de binding.`
+                    : `Capability "${capability}" é roteada automaticamente, mas nenhum provider LLM está configurado. Adicione um em Configurações → Provedores de IA.`,
+                });
+                state.logActivity({
+                  agentId: ceo?.id ?? "",
+                  agentName: ceo?.name ?? "CEO",
+                  action: hasLLMProvider ? "completed" : "thinking",
+                  message: hasLLMProvider
+                    ? `✅ "${capability}" é uma capability LLM e será roteada automaticamente para o provider configurado.`
+                    : `⚠️ "${capability}" precisa de um provider LLM. Vá em Configurações → Provedores de IA para adicionar um.`,
+                  taskId,
+                  accent: hasLLMProvider ? "green" : "orange",
+                });
+                if (!hasLLMProvider) {
+                  canRetry = false; // can't proceed without LLM provider
+                }
+                break;
+              }
+
               // Step 1: Check if any existing integration already serves this capability
               const compatibleIntegrations = state.integrations.filter(
                 (i) => i.capabilities.includes(capability) && i.status === "active"
@@ -2917,32 +2953,23 @@ export const useLovonStore = create<LovonState>()(
                 break;
               }
 
-              // Step 2: No existing integration — create an "internal" placeholder integration
-              // This allows the task to proceed with internal/default handling
-              const internalId = get().createIntegration({
-                providerKey: "internal" as import("@/lib/lovon/work-products").ProviderId,
-                name: `Internal ${capability} (auto-criado pelo CEO)`,
-                capabilities: [capability],
-                credentialsType: "none",
-                config: {},
-                limits: {},
-                allowedAgentSlugs: [],
-              });
-              get().bindCapability(capability, internalId);
-
+              // Step 2: Standard capability without binding — log a hint to user.
+              // Don't create an "internal" stub anymore — they were visual noise.
+              // The user can add the integration manually from Integrações.
               resolved.push({
                 blockerCode: blocker.code,
-                action: "create_internal_integration",
-                message: `CEO criou uma integração interna para "${capability}" e vinculou automaticamente. A task pode prosseguir com handling interno.`,
+                action: "needs_external_integration",
+                message: `Capability "${capability}" precisa de uma integração externa. Vá em Integrações → Adicionar integração → escolha o provider adequado (ex: Resend para email, GitHub para repo).`,
               });
               state.logActivity({
                 agentId: ceo?.id ?? "",
                 agentName: ceo?.name ?? "CEO",
-                action: "completed",
-                message: `✅ CEO resolveu CAPABILITY_NOT_CONFIGURED: criou integração interna para "${capability}" e vinculou. Task destravada.`,
+                action: "thinking",
+                message: `⏸️ "${capability}" precisa de uma integração externa. Configure em Integrações antes de continuar.`,
                 taskId,
-                accent: "green",
+                accent: "orange",
               });
+              canRetry = false; // need user action first
               break;
             }
 

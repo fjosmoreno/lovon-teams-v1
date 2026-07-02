@@ -127,8 +127,8 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
           <h1 className="text-2xl sm:text-3xl font-bold text-cream font-serif-display">Integrações</h1>
         </div>
         <p className="text-sm text-violet-muted max-w-2xl">
-          Conecte providers (Resend, Brave, GitHub, OpenAI...) ou crie integrações customizadas via OpenAPI.
-          Depois, faça o binding: cada capability é atendida por uma integração.
+          Conecte provedores de IA (Gemini, Groq, OpenRouter...) e serviços externos (Resend, GitHub, etc).
+          Suas chamadas de IA são roteadas automaticamente — não precisa vincular.
         </p>
       </div>
 
@@ -167,51 +167,84 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
 
       {/* === Tab: Connections === */}
       {tab === "connections" && (
-        <div className="space-y-3">
-          <button
-            onClick={() => { setShowWizard(true); setWizardPath(null); }}
-            className="btn-pill btn-primary-neon text-sm"
-          >
-            <Plus className="w-4 h-4" /> Adicionar integração
-          </button>
+        <div className="space-y-4">
+          {/* Section 1: AI Providers (LLM backends) */}
+          <ConnectionsSection
+            title="🧠 Provedores de IA"
+            subtitle="Onde seus agentes pensam. Roteamento automático, sem binding."
+            integrations={filteredIntegrations.filter((i) =>
+              ["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini"].includes(i.providerKey)
+            )}
+            testingId={testingId}
+            onTest={async (id) => {
+              setTestingId(id);
+              await testIntegrationReal(id);
+              setTestingId(null);
+            }}
+            onToggle={(i) =>
+              updateIntegration(i.id, { status: i.status === "active" ? "disabled" : "active" })
+            }
+            onDelete={deleteIntegration}
+            emptyMessage="Nenhum provedor de IA configurado. Adicione um para seus agentes funcionarem."
+          />
 
-          {filteredIntegrations.length === 0 ? (
-            <div className="text-center py-16">
-              <Plug className="w-12 h-12 mx-auto text-violet-muted/30 mb-3" />
-              <p className="text-sm text-violet-muted">
-                {filterCapability !== "all"
-                  ? `Nenhuma integração para a capability "${filterCapability}".`
-                  : "Nenhuma integração cadastrada."}
-              </p>
-              <p className="text-xs text-violet-muted/70 mt-1">
-                Clique em "Adicionar integração" para conectar um provider.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filteredIntegrations.map((integration) => {
-                const Icon = PROVIDER_ICONS[integration.providerKey] ?? Plug;
-                return (
-                  <IntegrationCard
-                    key={integration.id}
-                    integration={integration}
-                    onTest={async () => {
-                      setTestingId(integration.id);
-                      await testIntegrationReal(integration.id);
-                      setTestingId(null);
-                    }}
-                    testing={testingId === integration.id}
-                    onToggle={() =>
-                      updateIntegration(integration.id, {
-                        status: integration.status === "active" ? "disabled" : "active",
-                      })
-                    }
-                    onDelete={() => deleteIntegration(integration.id)}
-                  />
-                );
-              })}
-            </div>
-          )}
+          {/* Section 2: External Integrations (everything else) */}
+          <ConnectionsSection
+            title="🔌 Integrações externas"
+            subtitle="Resend (email), GitHub (repo), Vercel (deploy), etc. Use para dar superpoderes aos agentes."
+            integrations={filteredIntegrations.filter((i) =>
+              !["openai", "anthropic", "groq", "openrouter", "deepseek", "gemini", "internal"].includes(i.providerKey)
+            )}
+            testingId={testingId}
+            onTest={async (id) => {
+              setTestingId(id);
+              await testIntegrationReal(id);
+              setTestingId(null);
+            }}
+            onToggle={(i) =>
+              updateIntegration(i.id, { status: i.status === "active" ? "disabled" : "active" })
+            }
+            onDelete={deleteIntegration}
+            onAdd={() => { setShowWizard(true); setWizardPath(null); }}
+            emptyMessage="Nenhuma integração externa. Adicione Resend para email, GitHub para repositório, etc."
+          />
+
+          {/* Hidden by default: Internal stubs (collapsed) */}
+          {(() => {
+            const internalStubs = filteredIntegrations.filter((i) => i.providerKey === "internal");
+            if (internalStubs.length === 0) return null;
+            return (
+              <details className="rounded-xl glass border border-violet-subtle overflow-hidden">
+                <summary className="p-3 cursor-pointer text-xs text-violet-muted hover:text-cream transition-colors flex items-center gap-2">
+                  <span>🗂️ Stubs internos do sistema ({internalStubs.length})</span>
+                  <span className="text-[10px] text-violet-muted/70">— apenas para debug. Não requerem configuração.</span>
+                </summary>
+                <div className="p-3 space-y-2 border-t border-violet-subtle">
+                  {internalStubs.map((integration) => {
+                    const Icon = PROVIDER_ICONS[integration.providerKey] ?? Plug;
+                    return (
+                      <IntegrationCard
+                        key={integration.id}
+                        integration={integration}
+                        onTest={async () => {
+                          setTestingId(integration.id);
+                          await testIntegrationReal(integration.id);
+                          setTestingId(null);
+                        }}
+                        testing={testingId === integration.id}
+                        onToggle={() =>
+                          updateIntegration(integration.id, {
+                            status: integration.status === "active" ? "disabled" : "active",
+                          })
+                        }
+                        onDelete={() => deleteIntegration(integration.id)}
+                      />
+                    );
+                  })}
+                </div>
+              </details>
+            );
+          })()}
         </div>
       )}
 
@@ -286,6 +319,69 @@ export function IntegrationsView({ initialFilterCapability }: { initialFilterCap
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// === Connections Section (group of integrations) ===
+function ConnectionsSection({
+  title,
+  subtitle,
+  integrations,
+  testingId,
+  onTest,
+  onToggle,
+  onDelete,
+  onAdd,
+  emptyMessage,
+}: {
+  title: string;
+  subtitle: string;
+  integrations: Integration[];
+  testingId: string | null;
+  onTest: (id: string) => void;
+  onToggle: (i: Integration) => void;
+  onDelete: (id: string) => void;
+  onAdd?: () => void;
+  emptyMessage: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-end justify-between mb-2">
+        <div>
+          <h2 className="text-sm font-semibold text-cream">{title}</h2>
+          <p className="text-[11px] text-violet-muted">{subtitle}</p>
+        </div>
+        {onAdd && (
+          <button
+            onClick={onAdd}
+            className="px-3 py-1.5 rounded-lg bg-beige/10 border border-beige/30 text-beige hover:bg-beige/20 text-xs font-medium flex items-center gap-1.5 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" /> Adicionar
+          </button>
+        )}
+      </div>
+      {integrations.length === 0 ? (
+        <div className="p-6 rounded-xl border border-dashed border-violet-subtle text-center">
+          <p className="text-xs text-violet-muted">{emptyMessage}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {integrations.map((integration) => {
+            const Icon = PROVIDER_ICONS[integration.providerKey] ?? Plug;
+            return (
+              <IntegrationCard
+                key={integration.id}
+                integration={integration}
+                onTest={() => onTest(integration.id)}
+                testing={testingId === integration.id}
+                onToggle={() => onToggle(integration)}
+                onDelete={() => onDelete(integration.id)}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -407,6 +503,14 @@ function BindingPanel({
 
   return (
     <div className="space-y-3">
+      {/* Info banner: LLM capabilities are auto-routed */}
+      <div className="p-3 rounded-xl bg-neon-green/5 border border-neon-green/20 flex items-start gap-2">
+        <Zap className="w-4 h-4 text-neon-green shrink-0 mt-0.5" />
+        <div className="text-xs text-tech-gray leading-relaxed">
+          <span className="text-cream font-medium">Capacidades de IA são roteadas automaticamente</span> — você não precisa vincular Gemini/Groq/OpenRouter aqui. Esta página é só para vincular serviços externos (Resend para email, GitHub para repo, etc).
+        </div>
+      </div>
+
       {/* Filter dropdown */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-violet-muted">Filtrar:</span>
@@ -423,7 +527,7 @@ function BindingPanel({
       </div>
 
       <p className="text-xs text-violet-muted">
-        Cada capability pode ser atendida por UMA integração. Escolha qual integração atende cada capability.
+        Cada capability externa pode ser atendida por UMA integração. Escolha qual integração atende cada capability.
         Se uma capability não tem binding, agentes que tentarem usá-la recebem <code className="text-[#ff8a3d]">CAPABILITY_NOT_CONFIGURED</code>.
       </p>
 
