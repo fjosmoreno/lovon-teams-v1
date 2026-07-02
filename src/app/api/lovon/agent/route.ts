@@ -108,6 +108,148 @@ function getCurrentDate(): string {
   return `${day}/${month}/${year}`;
 }
 
+// === P0: Lovon House Keys — anti-rate-limit for the whole platform ===
+// The deployer (Fernando) can set multiple free-tier API keys as Render env vars.
+// The route rotates through them transparently, so users get N× the rate limit
+// (4 keys = 4× the per-minute quota). User-supplied keys (from providerConfig)
+// are tried FIRST; house keys are FALLBACK when the user has none or theirs hit 429.
+//
+// Env var format (JSON-encoded list):
+// LOVON_HOUSE_KEYS=[
+//   {"name":"groq-1","provider":"groq","baseUrl":"https://api.groq.com/openai/v1","apiKey":"gsk_...","model":"llama-3.3-70b-versatile"},
+//   {"name":"openrouter","provider":"openrouter","baseUrl":"https://openrouter.ai/api/v1","apiKey":"sk-or-v1-...","model":"google/gemma-2-9b-it:free"},
+//   {"name":"nvidia","provider":"nvidia","baseUrl":"https://integrate.api.nvidia.com/v1","apiKey":"nvapi-...","model":"meta/llama-3.1-70b-instruct"}
+// ]
+interface HouseKey {
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+let cachedHouseKeys: HouseKey[] | null = null;
+
+function getHouseKeys(): HouseKey[] {
+  if (cachedHouseKeys !== null) return cachedHouseKeys;
+  try {
+    const raw = process.env.LOVON_HOUSE_KEYS;
+    if (!raw) {
+      cachedHouseKeys = [];
+      return cachedHouseKeys;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      cachedHouseKeys = [];
+      return cachedHouseKeys;
+    }
+    // Validate each entry has required fields
+    cachedHouseKeys = parsed.filter(
+      (k) => k && typeof k.baseUrl === "string" && typeof k.apiKey === "string" && typeof k.model === "string"
+    );
+    console.log(`[house-keys] loaded ${cachedHouseKeys.length} Lovon house keys`);
+    return cachedHouseKeys;
+  } catch (err) {
+    console.warn("[house-keys] failed to parse LOVON_HOUSE_KEYS env var:", err);
+    cachedHouseKeys = [];
+    return cachedHouseKeys;
+  }
+}
+
+// === Try user's provider first, then rotate through house keys ===
+// Returns the LLM result from the first successful provider.
+// This is the SINGLE entry point for ALL LLM calls in the route.
+async function callLLMWithRotation(
+  baseParams: { systemPrompt: string; userPrompt: string; correlationId: string },
+  userProvider: { baseUrl?: string; apiKey?: string; model?: string; provider?: string } | null
+): Promise<Awaited<ReturnType<typeof executeLLMWithInfra>> & { providerUsed: string; keySource: "user" | "house" }> {
+  const houseKeys = getHouseKeys();
+  // Build candidate list: user first, then house keys
+  const candidates: Array<{ config: { baseUrl: string; apiKey: string; model: string; provider: string }; source: "user" | "house"; name: string }> = [];
+
+  if (userProvider?.baseUrl && userProvider?.apiKey) {
+    candidates.push({
+      config: {
+        baseUrl: userProvider.baseUrl,
+        apiKey: userProvider.apiKey,
+        model: userProvider.model ?? "default",
+        provider: userProvider.provider ?? "user",
+      },
+      source: "user",
+      name: userProvider.provider ?? "user-key",
+    });
+  }
+
+  for (const hk of houseKeys) {
+    candidates.push({
+      config: {
+        baseUrl: hk.baseUrl,
+        apiKey: hk.apiKey,
+        model: hk.model,
+        provider: hk.provider,
+      },
+      source: "house",
+      name: hk.name,
+    });
+  }
+
+  if (candidates.length === 0) {
+    return {
+      success: false,
+      content: "",
+      tokensIn: 0,
+      tokensOut: 0,
+      latencyMs: 0,
+      attempts: 0,
+      error: "Nenhum provider LLM configurado. Adicione uma key em Integrações ou peça ao deployer para configurar LOVON_HOUSE_KEYS.",
+      errorCode: "NO_PROVIDER",
+      providerUsed: "none",
+      keySource: "user",
+    };
+  }
+
+  // Try each candidate; stop on first success
+  const allErrors: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const result = await executeLLMWithInfra(
+        {
+          systemPrompt: baseParams.systemPrompt,
+          userPrompt: baseParams.userPrompt,
+          correlationId: `${baseParams.correlationId}:${candidate.name}`,
+          provider: candidate.config.provider,
+          model: candidate.config.model,
+        },
+        candidate.config
+      );
+      if (result.success) {
+        return { ...result, providerUsed: candidate.name, keySource: candidate.source };
+      }
+      // Non-retryable or exhausted retries: log and continue
+      allErrors.push(`${candidate.name}: ${result.error ?? "unknown"}`);
+      console.warn(`[house-keys] ${candidate.name} failed: ${result.error ?? "unknown"} (continuing to next)`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "unknown";
+      allErrors.push(`${candidate.name}: ${errMsg}`);
+      console.warn(`[house-keys] ${candidate.name} threw: ${errMsg} (continuing to next)`);
+    }
+  }
+
+  // All candidates failed
+  return {
+    success: false,
+    content: "",
+    tokensIn: 0,
+    tokensOut: 0,
+    latencyMs: 0,
+    attempts: candidates.length,
+    error: `Todos os ${candidates.length} provedores falharam:\n${allErrors.join("\n")}`,
+    errorCode: "ALL_FAILED",
+    providerUsed: "none",
+    keySource: "user",
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as AgentRequest;
@@ -192,15 +334,10 @@ DATA DE HOJE: ${currentDate}
 Analise esta missão e planeje a execução. Retorne o JSON conforme especificado. Não invente datas passadas.`;
 
       // === LLM call with retry + backoff + circuit breaker + queue ===
+      // P0: Try user's provider first, then rotate through Lovon house keys.
       const correlationId = `ceo-plan-${Date.now()}`;
-      const llmResult = await executeLLMWithInfra(
-        {
-          systemPrompt,
-          userPrompt,
-          correlationId,
-          provider: (providerConfig?.provider as string) ?? "openai-compatible",
-          model: providerConfig?.model ?? model ?? "default",
-        },
+      const llmResult = await callLLMWithRotation(
+        { systemPrompt, userPrompt, correlationId },
         providerConfig
       );
 
@@ -210,6 +347,7 @@ Analise esta missão e planeje a execução. Retorne o JSON conforme especificad
           error: `LLM falhou após ${llmResult.attempts} tentativas: ${llmResult.error}`,
           errorCode: llmResult.errorCode,
           correlationId,
+          providerUsed: llmResult.providerUsed,
           infra: { attempts: llmResult.attempts, latencyMs: llmResult.latencyMs },
         }, { status: 502 });
       }
@@ -382,15 +520,10 @@ Regras CRÍTICAS:
     }
 
     // === LLM call with retry + backoff + circuit breaker + queue ===
+    // P0: Try user's provider first, then rotate through Lovon house keys.
     const correlationId = `worker-${agentName.replace(/\s/g, "-")}-${Date.now()}`;
-    const llmResult = await executeLLMWithInfra(
-      {
-        systemPrompt,
-        userPrompt: finalUserPrompt,
-        correlationId,
-        provider: (providerConfig?.provider as string) ?? "openai-compatible",
-        model: providerConfig?.model ?? model ?? "default",
-      },
+    const llmResult = await callLLMWithRotation(
+      { systemPrompt, userPrompt: finalUserPrompt, correlationId },
       providerConfig
     );
 
@@ -399,6 +532,7 @@ Regras CRÍTICAS:
         success: false,
         error: `LLM falhou após ${llmResult.attempts} tentativas: ${llmResult.error}`,
         errorCode: llmResult.errorCode,
+        providerUsed: llmResult.providerUsed,
         correlationId,
         infra: {
           attempts: llmResult.attempts,

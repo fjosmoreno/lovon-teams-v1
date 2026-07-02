@@ -152,7 +152,10 @@ interface Props {
 export function ProviderSetup({ onComplete, onSkip }: Props) {
   const createIntegration = useLovonStore((s) => s.createIntegration);
 
-  // === Primary provider (the one user picks first) ===
+  // === P0: Mode selector — "lovon-free" (use Lovon's house keys, zero config) or "own-key" (BYOK) ===
+  const [mode, setMode] = useState<"lovon-free" | "own-key">("lovon-free");
+
+  // === Primary provider (the one user picks first) — only used in "own-key" mode ===
   const [primaryId, setPrimaryId] = useState<string>("openrouter");
   const [primaryKey, setPrimaryKey] = useState("");
   const [primaryModel, setPrimaryModel] = useState<string>("google/gemma-2-9b-it:free");
@@ -214,6 +217,27 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
 
   async function handleSaveAndContinue() {
     setError(null);
+    // P0: Lovon Free mode — skip key entry, use server-side house keys (no integration created)
+    if (mode === "lovon-free") {
+      setSaving(true);
+      try {
+        // Mark this user as on Lovon Free mode in localStorage
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("lovon:ai-mode", "lovon-free");
+        }
+        // Trigger auto-resume for any blocked tasks
+        import("@/lib/lovon/engine").then(({ tryAutoResumeBlockedTasks }) => {
+          tryAutoResumeBlockedTasks({ reason: "provider-added" });
+        });
+        onComplete();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao continuar");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    // BYOK mode — need a key
     if (!primaryKey.trim()) {
       setError("Cole sua API key do " + primary.name + " para continuar.");
       return;
@@ -251,6 +275,9 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
       }
       // P0: trigger auto-resume for any tasks blocked by rate limit
       // (user just added provider keys during onboarding)
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("lovon:ai-mode", "byok");
+      }
       import("@/lib/lovon/engine").then(({ tryAutoResumeBlockedTasks }) => {
         tryAutoResumeBlockedTasks({ reason: "provider-added" });
       });
@@ -291,7 +318,57 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           </p>
         </motion.div>
 
-        {/* === Primary provider card === */}
+        {/* === P0: Mode toggle — "Lovon Free" (zero config) vs "BYOK" (bring your own key) === */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.05 }}
+          className="grid grid-cols-2 gap-3 mb-4"
+        >
+          <button
+            onClick={() => setMode("lovon-free")}
+            className={`p-4 rounded-2xl border-2 transition-all text-left ${
+              mode === "lovon-free"
+                ? "bg-neon-green/10 border-neon-green/50 shadow-lg shadow-neon-green/10"
+                : "bg-violet-dark/40 border-violet-subtle hover:border-neon-green/30"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className={`w-4 h-4 ${mode === "lovon-free" ? "text-neon-green" : "text-tech-gray"}`} />
+              <span className={`text-sm font-bold ${mode === "lovon-free" ? "text-neon-green" : "text-cream"}`}>
+                Lovon Free
+              </span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-neon-green/15 text-neon-green border border-neon-green/30">
+                0 CONFIG
+              </span>
+            </div>
+            <p className="text-[10px] text-tech-gray leading-relaxed">
+              Comece agora. IA fornecida pela Lovon. Sem cadastro, sem cartão, sem key.
+            </p>
+          </button>
+          <button
+            onClick={() => setMode("own-key")}
+            className={`p-4 rounded-2xl border-2 transition-all text-left ${
+              mode === "own-key"
+                ? "bg-beige/10 border-beige/50 shadow-lg shadow-beige/10"
+                : "bg-violet-dark/40 border-violet-subtle hover:border-beige/30"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Key className={`w-4 h-4 ${mode === "own-key" ? "text-beige" : "text-tech-gray"}`} />
+              <span className={`text-sm font-bold ${mode === "own-key" ? "text-beige" : "text-cream"}`}>
+                Minha própria key
+              </span>
+            </div>
+            <p className="text-[10px] text-tech-gray leading-relaxed">
+              Para usuários avançados: use sua própria API key. Mais controle, mais privacidade.
+            </p>
+          </button>
+        </motion.div>
+
+        {/* === Primary provider card (only shown in BYOK mode) === */}
+        {mode === "own-key" && (
+        <>
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -581,6 +658,35 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
             <span className="text-cream font-medium">Mais opções?</span> OpenRouter dá acesso a 20+ modelos com 1 key.
           </div>
         </motion.div>
+        </>
+        )}
+
+        {/* === Lovon Free info card (only shown in Lovon Free mode) === */}
+        {mode === "lovon-free" && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
+          className="p-5 rounded-2xl bg-neon-green/5 border-2 border-neon-green/30 mb-4"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles className="w-5 h-5 text-neon-green" />
+            <h2 className="text-base font-bold text-cream">IA Grátis da Lovon</h2>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green border border-neon-green/30">
+              ILIMITADO*
+            </span>
+          </div>
+          <p className="text-xs text-tech-gray leading-relaxed mb-3">
+            A Lovon Teams vem com um pool de chaves de API grátis pré-configuradas no servidor. Quando você executa uma task, o sistema escolhe a melhor chave disponível — sem você precisar se preocupar com rate limit, sem cadastro em site externo, sem chave pra copiar.
+          </p>
+          <div className="text-[10px] text-tech-gray/80 leading-relaxed mb-3">
+            <span className="text-cream font-medium">*Limitado pela quantidade de chaves que a Lovon tem.</span> Para garantir disponibilidade, a Lovon usa rotação automática entre várias contas grátis. Se o tráfego aumentar muito, podemos ter rate limit — nesse caso, você pode adicionar sua própria key a qualquer momento em Integrações.
+          </div>
+          <div className="text-[10px] text-cream/60 leading-relaxed">
+            💡 Quer mais controle? Clique em <span className="text-beige font-medium">"Minha própria key"</span> acima para usar suas próprias chaves.
+          </div>
+        </motion.div>
+        )}
 
         {/* === Error === */}
         {error && (
@@ -604,10 +710,16 @@ export function ProviderSetup({ onComplete, onSkip }: Props) {
           <button
             onClick={handleSaveAndContinue}
             disabled={saving}
-            className="w-full py-3 rounded-lg bg-cream text-violet-bg text-sm font-bold hover:bg-beige transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            className={`w-full py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 ${
+              mode === "lovon-free"
+                ? "bg-neon-green text-violet-bg hover:bg-neon-green/90"
+                : "bg-cream text-violet-bg hover:bg-beige"
+            }`}
           >
             {saving ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Salvando...</>
+            ) : mode === "lovon-free" ? (
+              <><Sparkles className="w-4 h-4" /> Começar com IA grátis <ArrowRight className="w-4 h-4" /></>
             ) : (
               <>Continuar <ArrowRight className="w-4 h-4" /></>
             )}
