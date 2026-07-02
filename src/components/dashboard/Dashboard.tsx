@@ -411,14 +411,24 @@ export function Dashboard({ onExit }: Props) {
                       <div className="text-[10px] text-[#9CA3AF] truncate">{user?.email}</div>
                     </div>
                     <button
-                      onClick={() => { setUserMenuOpen(false); onExit(); }}
+                      onClick={async () => {
+                        setUserMenuOpen(false);
+                        // P0: clear workspace data (vault, integrations, tasks) so going
+                        // back to landing doesn't leak the next user's data
+                        await logout();
+                        onExit();
+                      }}
                       className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-[#9CA3AF] hover:text-[#E5E7EB] hover:bg-white/[0.03] transition-all"
                     >
                       <LogOut className="w-3.5 h-3.5" />
                       Voltar ao site
                     </button>
                     <button
-                      onClick={async () => { setUserMenuOpen(false); await logout(); onExit(); }}
+                      onClick={async () => {
+                        setUserMenuOpen(false);
+                        await logout();
+                        onExit();
+                      }}
                       className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-[#9CA3AF] hover:text-red-400 hover:bg-red-500/5 transition-all"
                     >
                       <LogOut className="w-3.5 h-3.5" />
