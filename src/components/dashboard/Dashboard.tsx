@@ -164,6 +164,16 @@ export function Dashboard({ onExit }: Props) {
     };
   }, [hydrated]);
 
+  // P0: Listen for navigation events from child components (e.g., "view work products" link)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ view: View }>).detail;
+      if (detail?.view) setView(detail.view);
+    };
+    window.addEventListener("lovon:navigate", handler as EventListener);
+    return () => window.removeEventListener("lovon:navigate", handler as EventListener);
+  }, []);
+
   const pendingCount = tasksPendingUnassigned;
 
   const renderView = () => {

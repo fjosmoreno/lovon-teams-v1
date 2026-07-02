@@ -13,6 +13,23 @@ import { detectEmailRequirement, ensureEmailAgent, routeTask } from "./taskRoute
 const uid = (prefix = "id") =>
   `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-3)}`;
 
+// P0: Strip >>>WORK_PRODUCT: ... <<<END_WORK_PRODUCT blocks from a conclusion.
+// Returns the prose with the structured blocks removed, so the user sees a
+// clean text conclusion (not raw JSON). The blocks are already parsed and
+// stored as separate work product cards.
+function stripWorkProductBlocks(conclusion: string): string {
+  if (!conclusion) return conclusion;
+  // Remove blocks (greedy, multi-line)
+  let cleaned = conclusion.replace(/>>>WORK_PRODUCT:\s*\w+\s*\n[\s\S]*?<<<END_WORK_PRODUCT/g, "").trim();
+  // If the conclusion is now mostly empty, but we know blocks were stripped, leave a placeholder
+  if (cleaned.length < 50 && />>>WORK_PRODUCT/.test(conclusion)) {
+    cleaned = "Conclusão entregue via work products estruturados. Veja a aba Work Products para os artefatos.";
+  }
+  // Collapse 3+ consecutive newlines into 2
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+  return cleaned;
+}
+
 // P0: Build a fallback work product of the given type, with the conclusion as content.
 // Each type has different required fields. This ensures the hard gate passes
 // (we satisfy the expected count) while preserving the LLM's actual content.
@@ -1135,7 +1152,12 @@ async function delegateAndExecute(
 
     // 6. Worker completes with REAL conclusion (hard gate will check WPs)
     stopExecutionWatchdog(taskId); // P0: task completed, stop watchdog
-    useLovonStore.getState().completeTask(taskId, execResult.conclusion);
+    // P0: Strip >>>WORK_PRODUCT: ... <<<END_WORK_PRODUCT blocks from the
+    // conclusion before saving. The blocks are already parsed and saved as
+    // structured work products. Showing the raw JSON in the task conclusion
+    // is noise — user should see clean prose + separate Work Products cards.
+    const cleanConclusion = stripWorkProductBlocks(execResult.conclusion);
+    useLovonStore.getState().completeTask(taskId, cleanConclusion);
     const kbNote = execResult.retrievedDocs && execResult.retrievedDocs.length > 0
       ? ` · ${execResult.retrievedDocs.length} doc(s) KB recuperado(s)`
       : "";

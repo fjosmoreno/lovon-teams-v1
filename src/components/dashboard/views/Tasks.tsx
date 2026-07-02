@@ -613,6 +613,56 @@ function ConclusionModal({ task, onClose }: { task: Task; onClose: () => void })
             </div>
           )}
 
+          {/* P0: Show work products linked to this task — they hold the structured output */}
+          {(() => {
+            const linkedWPs = useLovonStore.getState().workProducts.filter(
+              (wp) => wp.meta.sourceTaskId === task.id
+            );
+            if (linkedWPs.length === 0) return null;
+            return (
+              <div className="mb-5 p-4 rounded-xl bg-neon-blue/5 border border-neon-blue/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <Megaphone className="w-4 h-4 text-neon-blue" />
+                  <span className="text-sm font-semibold text-cream">
+                    {linkedWPs.length} work product{linkedWPs.length > 1 ? "s" : ""} produzido{linkedWPs.length > 1 ? "s" : ""}
+                  </span>
+                  <a
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      // Navigate to Work Products view
+                      const ev = new CustomEvent("lovon:navigate", { detail: { view: "work-products" } });
+                      window.dispatchEvent(ev);
+                    }}
+                    className="ml-auto text-[10px] font-mono px-2 py-1 rounded bg-neon-blue/15 text-neon-blue border border-neon-blue/30 hover:bg-neon-blue/25 transition-colors"
+                  >
+                    Ver todos →
+                  </a>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {linkedWPs.map((wp) => (
+                    <div key={wp.meta.id} className="p-2.5 rounded-lg bg-violet-bg/30 border border-violet-subtle">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-beige/10 text-beige border border-beige/20">
+                          {wp.meta.type}
+                        </span>
+                        <span className="text-[10px] text-cream truncate flex-1" title={(wp as any).name || (wp as any).title || (wp as any).hook}>
+                          {(wp as any).name || (wp as any).title || (wp as any).hook || wp.meta.id.slice(-6)}
+                        </span>
+                      </div>
+                      {wp.meta.type === "social_post_card" && (wp as any).body && (
+                        <p className="text-[10px] text-tech-gray line-clamp-2 mt-1">{(wp as any).body}</p>
+                      )}
+                      {wp.meta.type === "campaign_brief" && (wp as any).objective && (
+                        <p className="text-[10px] text-tech-gray line-clamp-2 mt-1">{(wp as any).objective}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {task.result ? (
             <MarkdownRenderer content={task.result} />
           ) : (
